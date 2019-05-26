@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -91,7 +91,7 @@ value_t colm_vlist_detach_tail( struct colm_program *prg, list_t *list )
 	value_t val = colm_struct_get_field( s, value_t, 0 );
 
 	if ( list->generic_info->value_type == TYPE_TREE )
-		colm_tree_upref( (tree_t*)val );
+		colm_tree_upref( prg, (tree_t*)val );
 
 	return val;
 }
@@ -107,7 +107,7 @@ value_t colm_vlist_detach_head( struct colm_program *prg, list_t *list )
 	value_t val = colm_struct_get_field( s, value_t, 0 );
 
 	if ( list->generic_info->value_type == TYPE_TREE )
-		colm_tree_upref( (tree_t*) val );
+		colm_tree_upref( prg, (tree_t*) val );
 
 	return val;
 }
@@ -205,7 +205,7 @@ list_t *colm_list_new( struct colm_program *prg )
 	struct colm_list *list = (struct colm_list*) malloc( memsize );
 	memset( list, 0, memsize );
 	colm_struct_add( prg, (struct colm_struct *)list );
-	list->id = STRUCT_INBUILT_ID;
+	list->id = prg->rtd->struct_inbuilt_id;
 	list->destructor = &colm_list_destroy;
 	return list;
 }

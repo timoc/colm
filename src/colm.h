@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2016 Adrian Thurston <thurston@colm.net>
+ * Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -131,6 +131,7 @@ int colm_delete_program( struct colm_program *prg );
 /* Set the pointer to the reduce struct used. */
 void *colm_get_reduce_ctx( struct colm_program *prg );
 void colm_set_reduce_ctx( struct colm_program *prg, void *ctx );
+void colm_set_reduce_clean( struct colm_program *prg, unsigned char reduce_clean );
 
 const char *colm_error( struct colm_program *prg, int *length );
 

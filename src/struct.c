@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 Adrian Thurston <thurston@colm.net>
+ * Copyright 2016-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -61,24 +61,28 @@ struct colm_struct *colm_struct_new_size( program_t *prg, int size )
 
 struct colm_struct *colm_struct_new( program_t *prg, int id )
 {
-	struct colm_struct *s = colm_struct_new_size( prg, prg->rtd->sel_info[id].size );
+	struct colm_struct *s = colm_struct_new_size( prg, prg->rtd->sel_info[id - prg->rtd->num_lang_els].size );
 	s->id = id;
 	return s;
 }
 
+struct struct_el_info *colm_sel_info( program_t *prg, int id )
+{
+	return &prg->rtd->sel_info[id - prg->rtd->num_lang_els];
+}
+
 void colm_struct_delete( program_t *prg, tree_t **sp, struct colm_struct *el )
 {
-	if ( el->id == STRUCT_INBUILT_ID ) {
+	if ( el->id == prg->rtd->struct_inbuilt_id || el->id == prg->rtd->struct_stream_id ) {
 		colm_destructor_t destructor = ((struct colm_inbuilt*)el)->destructor;
 		if ( destructor != 0 )
 			(*destructor)( prg, sp, el );
 	}
-
-	if ( el->id >= 0 ) { 
-		short *t = prg->rtd->sel_info[el->id].trees;
-		int i, len = prg->rtd->sel_info[el->id].trees_len;
-		for ( i = 0; i < len; i++ ) {
-			tree_t *tree = colm_struct_get_field( el, tree_t*, t[i] );
+	else {
+		int tree_i;
+		struct struct_el_info *sel = colm_sel_info( prg, el->id );
+		for ( tree_i = 0; tree_i < sel->trees_len; tree_i++ ) {
+			tree_t *tree = colm_struct_get_field( el, tree_t*, sel->trees[tree_i] );
 			colm_tree_downref( prg, sp, tree );
 		}
 	}
@@ -97,20 +101,20 @@ void colm_parser_destroy( program_t *prg, tree_t **sp, struct colm_struct *s )
 	colm_tree_downref( prg, sp, parser->result );
 }
 
-parser_t *colm_parser_new( program_t *prg, struct generic_info *gi, int reducer )
+parser_t *colm_parser_new( program_t *prg, struct generic_info *gi, int stop_id, int reducer )
 {
 	struct pda_run *pda_run = malloc( sizeof(struct pda_run) );
 
 	/* Start off the parsing process. */
 	colm_pda_init( prg, pda_run, prg->rtd->pda_tables, 
-			gi->parser_id, 0, 0, 0, reducer );
+			gi->parser_id, stop_id, 0, 0, reducer );
 	
 	size_t memsize = sizeof(struct colm_parser);
 	struct colm_parser *parser = (struct colm_parser*) malloc( memsize );
 	memset( parser, 0, memsize );
 	colm_struct_add( prg, (struct colm_struct*) parser );
 
-	parser->id = STRUCT_INBUILT_ID;
+	parser->id = prg->rtd->struct_inbuilt_id;
 	parser->destructor = &colm_parser_destroy;
 	parser->pda_run = pda_run;
 
@@ -136,11 +140,11 @@ map_t *colm_map_new( struct colm_program *prg )
 	struct colm_map *map = (struct colm_map*) malloc( memsize );
 	memset( map, 0, memsize );
 	colm_struct_add( prg, (struct colm_struct *)map );
-	map->id = STRUCT_INBUILT_ID;
+	map->id = prg->rtd->struct_inbuilt_id;
 	return map;
 }
 
-struct_t *colm_construct_generic( program_t *prg, long generic_id )
+struct_t *colm_construct_generic( program_t *prg, long generic_id, int stop_id )
 {
 	struct generic_info *generic_info = &prg->rtd->generic_info[generic_id];
 	struct_t *new_generic = 0;
@@ -158,8 +162,8 @@ struct_t *colm_construct_generic( program_t *prg, long generic_id )
 			break;
 		}
 		case GEN_PARSER: {
-			parser_t *parser = colm_parser_new( prg, generic_info, 0 );
-			parser->input = colm_stream_new( prg );
+			parser_t *parser = colm_parser_new( prg, generic_info, stop_id, 0 );
+			parser->input = colm_input_new( prg );
 			new_generic = (struct_t*) parser;
 			break;
 		}
@@ -173,8 +177,8 @@ struct_t *colm_construct_reducer( program_t *prg, long generic_id, int reducer_i
 	struct generic_info *generic_info = &prg->rtd->generic_info[generic_id];
 	struct_t *new_generic = 0;
 
-	parser_t *parser = colm_parser_new( prg, generic_info, reducer_id );
-	parser->input = colm_stream_new( prg );
+	parser_t *parser = colm_parser_new( prg, generic_info, 0, reducer_id );
+	parser->input = colm_input_new( prg );
 	new_generic = (struct_t*) parser;
 
 	return new_generic;

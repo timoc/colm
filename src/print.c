@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -57,19 +57,19 @@ static void xml_escape_data( struct colm_print_args *print_args, const char *dat
 	}
 }
 
-void init_str_collect( StrCollect *collect )
+void init_str_collect( str_collect_t *collect )
 {
 	collect->data = (char*) malloc( BUFFER_INITIAL_SIZE );
 	collect->allocated = BUFFER_INITIAL_SIZE;
 	collect->length = 0;
 }
 
-void str_collect_destroy( StrCollect *collect )
+void str_collect_destroy( str_collect_t *collect )
 {
 	free( collect->data );
 }
 
-void str_collect_append( StrCollect *collect, const char *data, long len )
+void str_collect_append( str_collect_t *collect, const char *data, long len )
 {
 	long new_len = collect->length + len;
 	if ( new_len > collect->allocated ) {
@@ -80,7 +80,7 @@ void str_collect_append( StrCollect *collect, const char *data, long len )
 	collect->length += len;
 }
 		
-void str_collect_clear( StrCollect *collect )
+void str_collect_clear( str_collect_t *collect )
 {
 	collect->length = 0;
 }
@@ -94,13 +94,13 @@ void print_str( struct colm_print_args *print_args, head_t *str )
 
 void append_collect( struct colm_print_args *args, const char *data, int length )
 {
-	str_collect_append( (StrCollect*) args->arg, data, length );
+	str_collect_append( (str_collect_t*) args->arg, data, length );
 }
 
 void append_file( struct colm_print_args *args, const char *data, int length )
 {
 	int level;
-	struct stream_impl *impl = (struct stream_impl*) args->arg;
+	struct stream_impl_data *impl = (struct stream_impl_data*) args->arg;
 
 restart:
 	if ( impl->indent ) {
@@ -468,7 +468,7 @@ void colm_print_term_tree( program_t *prg, tree_t **sp,
 	}
 
 	struct lang_el_info *lel_info = prg->rtd->lel_info;
-	struct stream_impl *impl = (struct stream_impl*) print_args->arg;
+	struct stream_impl_data *impl = (struct stream_impl_data*) print_args->arg;
 
 	if ( strcmp( lel_info[kid->tree->id].name, "_IN_" ) == 0 ) {
 		if ( impl->level == COLM_INDENT_OFF ) {
@@ -485,7 +485,7 @@ void colm_print_term_tree( program_t *prg, tree_t **sp,
 }
 
 void colm_print_tree_collect( program_t *prg, tree_t **sp,
-		StrCollect *collect, tree_t *tree, int trim )
+		str_collect_t *collect, tree_t *tree, int trim )
 {
 	struct colm_print_args print_args = {
 			collect, true, false, trim, &append_collect, 
@@ -496,7 +496,7 @@ void colm_print_tree_collect( program_t *prg, tree_t **sp,
 }
 
 void colm_print_tree_collect_a( program_t *prg, tree_t **sp,
-		StrCollect *collect, tree_t *tree, int trim )
+		str_collect_t *collect, tree_t *tree, int trim )
 {
 	struct colm_print_args print_args = {
 			collect, true, true, trim, &append_collect, 
@@ -721,7 +721,7 @@ static void postfix_close( program_t *prg, tree_t **sp,
 }
 
 void colm_postfix_tree_collect( program_t *prg, tree_t **sp,
-		StrCollect *collect, tree_t *tree, int trim )
+		str_collect_t *collect, tree_t *tree, int trim )
 {
 	struct colm_print_args print_args = {
 		collect, false, false, false, &append_collect, 
@@ -731,6 +731,7 @@ void colm_postfix_tree_collect( program_t *prg, tree_t **sp,
 	colm_print_tree_args( prg, sp, &print_args, tree );
 }
 
+#if 0
 void colm_postfix_tree_file( program_t *prg, tree_t **sp, struct stream_impl *impl,
 		tree_t *tree, int trim )
 {
@@ -743,5 +744,28 @@ void colm_postfix_tree_file( program_t *prg, tree_t **sp, struct stream_impl *im
 
 	//struct stream_impl *impl = (struct stream_impl*) args->arg;
 	fflush( impl->file );
+}
+#endif
+
+void colm_print_tree_collect_xml( program_t *prg, tree_t **sp,
+		str_collect_t *collect, tree_t *tree, int trim )
+{
+	struct colm_print_args print_args = {
+			collect, false, false, trim, &append_collect, 
+			&xml_open, &xml_term, &xml_close
+	};
+
+	colm_print_tree_args( prg, sp, &print_args, tree );
+}
+
+void colm_print_tree_collect_xml_ac( program_t *prg, tree_t **sp,
+		str_collect_t *collect, tree_t *tree, int trim )
+{
+	struct colm_print_args print_args = {
+			collect, true, true, trim, &append_collect, 
+			&xml_open, &xml_term, &xml_close
+	};
+
+	colm_print_tree_args( prg, sp, &print_args, tree );
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -34,37 +34,60 @@
 using std::cerr;
 using std::endl;
 
-extern stream_funcs patternFuncs;
-extern stream_funcs replFuncs;
+DEF_INPUT_FUNCS( input_funcs_ct, input_impl_ct );
+
+extern input_funcs_ct pat_funcs;
+extern input_funcs_ct repl_funcs;
+
+struct input_impl_ct
+{
+	struct input_funcs *funcs;
+
+	char *name;
+	long line;
+	long column;
+	long byte;
+
+	struct Pattern *pattern;
+	struct PatternItem *pat_item;
+	struct Constructor *constructor;
+	struct ConsItem *cons_item;
+
+	char eof_mark;
+	char eof_sent;
+
+	int offset;
+};
+
+void ct_destructor( program_t *prg, tree_t **sp, struct input_impl_ct *ss )
+{
+}
+
+char ct_get_eof_sent( struct colm_program *prg, struct input_impl_ct *si )
+{
+	return si->eof_sent;
+}
+
+void ct_set_eof_sent( struct colm_program *prg, struct input_impl_ct *si, char eof_sent )
+{
+	si->eof_sent = eof_sent;
+}
 
 /*
  * Pattern
  */
 
-struct stream_impl *colm_impl_new_pat( char *name, Pattern *pattern )
+struct input_impl *colm_impl_new_pat( char *name, Pattern *pattern )
 {
-	struct stream_impl *ss = (struct stream_impl*)malloc(sizeof(struct stream_impl));
-	memset( ss, 0, sizeof(struct stream_impl) );
+	struct input_impl_ct *ss = (struct input_impl_ct*)malloc(sizeof(struct input_impl_ct));
+	memset( ss, 0, sizeof(struct input_impl_ct) );
 	ss->pattern = pattern;
 	ss->pat_item = pattern->list->head;
-	ss->funcs = &patternFuncs;
-	return ss;
+	ss->funcs = (struct input_funcs*)&pat_funcs;
+	return (struct input_impl*) ss;
 }
 
-LangEl *inputStreamPatternGetLangEl( struct stream_impl *ss, long *bindId,
-		char **data, long *length )
-{ 
-	LangEl *klangEl = ss->pat_item->prodEl->langEl;
-	*bindId = ss->pat_item->bindId;
-	*data = 0;
-	*length = 0;
-
-	ss->pat_item = ss->pat_item->next;
-	ss->offset = 0;
-	return klangEl;
-}
-
-int inputStreamPatternGetParseBlock( struct stream_impl *ss, int skip,
+int pat_get_parse_block( struct colm_program *prg, struct input_impl_ct *ss, int *pskip,
 		char **pdp, int *copied )
 { 
 	*copied = 0;
@@ -74,7 +97,7 @@ int inputStreamPatternGetParseBlock( struct stream_impl *ss, int skip,
 
 	while ( true ) {
 		if ( buf == 0 )
-			return INPUT_EOD;
+			return INPUT_EOF;
 
 		if ( buf->form == PatternItem::TypeRefForm )
 			return INPUT_LANG_EL;
@@ -88,16 +111,16 @@ int inputStreamPatternGetParseBlock( struct stream_impl *ss, int skip,
 			int slen = avail;
 
 			/* Need to skip? */
-			if ( skip > 0 && slen <= skip ) {
+			if ( *pskip > 0 && slen <= *pskip ) {
 				/* Skipping the the whole source. */
-				skip -= slen;
+				*pskip -= slen;
 			}
 			else {
 				/* Either skip is zero, or less than slen. Skip goes to zero.
 				 * Some data left over, copy it. */
-				src += skip;
-				slen -= skip;
-				skip = 0;
+				src += *pskip;
+				slen -= *pskip;
+				*pskip = 0;
 
 				*pdp = src;
 				*copied += slen;
@@ -112,7 +135,8 @@ int inputStreamPatternGetParseBlock( struct stream_impl *ss, int skip,
 	return INPUT_DATA;
 }
 
-int inputStreamPatternGetData( struct stream_impl *ss, char *dest, int length )
+
+int pat_get_data( struct colm_program *prg, struct input_impl_ct *ss, char *dest, int length )
 { 
 	int copied = 0;
 
@@ -149,7 +173,7 @@ int inputStreamPatternGetData( struct stream_impl *ss, char *dest, int length )
 	return copied;
 }
 
-void inputStreamPatternBackup( struct stream_impl *ss )
+void pat_backup( struct input_impl_ct *ss )
 {
 	if ( ss->pat_item == 0 )
 		ss->pat_item = ss->pattern->list->tail;
@@ -157,35 +181,7 @@ void inputStreamPatternBackup( struct stream_impl *ss )
 		ss->pat_item = ss->pat_item->prev;
 }
 
-void inputStreamPatternPushBackBuf( struct stream_impl *ss, struct run_buf *runBuf )
-{
-	char *data = runBuf->data + runBuf->offset;
-	long length = runBuf->length;
-
-	if ( length == 0 )
-		return;
-
-	/* While pushing back past the current pattern item start. */
-	while ( length > ss->offset ) {
-		length -= ss->offset;
-		if ( ss->offset > 0 )
-			assert( memcmp( ss->pat_item->data, data-length, ss->offset ) == 0 );
-		inputStreamPatternBackup( ss );
-		ss->offset = ss->pat_item->data.length();
-	}
-
-	ss->offset -= length;
-	assert( memcmp( &ss->pat_item->data[ss->offset], data, length ) == 0 );
-}
-
-void inputStreamPatternUndoConsumeLangEl( struct stream_impl *ss )
-{
-	inputStreamPatternBackup( ss );
-	ss->offset = ss->pat_item->data.length();
-}
-
-int inputStreamPatternConsumeData( program_t *prg, tree_t **sp,
-		struct stream_impl *ss, int length, location_t *loc )
+int pat_consume_data( struct colm_program *prg, struct input_impl_ct *ss, int length, location_t *loc )
 {
 	//debug( REALM_INPUT, "consuming %ld bytes\n", length );
 
@@ -219,40 +215,83 @@ int inputStreamPatternConsumeData( program_t *prg, tree_t **sp,
 	return consumed;
 }
 
-int inputStreamPatternUndoConsumeData( struct stream_impl *ss, const char *data, int length )
+int pat_undo_consume_data( struct colm_program *prg, struct input_impl_ct *ss, const char *data, int length )
 {
 	ss->offset -= length;
 	return length;
 }
 
-stream_funcs patternFuncs = 
+LangEl *pat_consume_lang_el( struct colm_program *prg, struct input_impl_ct *ss, long *bindId,
+		char **data, long *length )
+{ 
+	LangEl *klangEl = ss->pat_item->prodEl->langEl;
+	*bindId = ss->pat_item->bindId;
+	*data = 0;
+	*length = 0;
+
+	ss->pat_item = ss->pat_item->next;
+	ss->offset = 0;
+	return klangEl;
+}
+
+void pat_undo_consume_lang_el( struct colm_program *prg, struct input_impl_ct *ss )
 {
-	&inputStreamPatternGetParseBlock,
-	&inputStreamPatternGetData,
-	&inputStreamPatternConsumeData,
-	&inputStreamPatternUndoConsumeData,
-	0,
-	0,
-	&inputStreamPatternGetLangEl,
-	&inputStreamPatternUndoConsumeLangEl,
+	pat_backup( ss );
+	ss->offset = ss->pat_item->data.length();
+}
+
+void ct_set_eof_mark( struct colm_program *prg, struct input_impl_ct *si, char eof_mark )
+{
+	si->eof_mark = eof_mark;
+}
+
+void ct_transfer_loc_seq( struct colm_program *prg, location_t *loc, struct input_impl_ct *ss )
+{
+	loc->name = ss->name;
+	loc->line = ss->line;
+	loc->column = ss->column;
+	loc->byte = ss->byte;
+}
+
+input_funcs_ct pat_funcs = 
+{
+	&pat_get_parse_block,
+	&pat_get_data,
+
+	&pat_consume_data,
+	&pat_undo_consume_data,
+
+	0, /* consume_tree */
+	0, /* undo_consume_tree */
+
+	&pat_consume_lang_el,
+	&pat_undo_consume_lang_el,
+	
+	0, 0, 0, 0, 0, 0, /* prepend funcs. */
+	0, 0, 0, 0, 0, 0, /* append funcs */
+
+	&ct_set_eof_mark,
+
+	&ct_transfer_loc_seq,
+	&ct_destructor,
 };
 
 
 /*
- * Constructor
+ * Replacements
  */
 
-struct stream_impl *colm_impl_new_cons( char *name, Constructor *constructor )
+struct input_impl *colm_impl_new_cons( char *name, Constructor *constructor )
 {
-	struct stream_impl *ss = (struct stream_impl*)malloc(sizeof(struct stream_impl));
-	memset( ss, 0, sizeof(struct stream_impl) );
+	struct input_impl_ct *ss = (struct input_impl_ct*)malloc(sizeof(struct input_impl_ct));
+	memset( ss, 0, sizeof(struct input_impl_ct) );
 	ss->constructor = constructor;
 	ss->cons_item = constructor->list->head;
-	ss->funcs = &replFuncs;
-	return ss;
+	ss->funcs = (struct input_funcs*)&repl_funcs;
+	return (struct input_impl*)ss;
 }
 
-LangEl *inputStreamConsGetLangEl( struct stream_impl *ss, long *bindId, char **data, long *length )
+LangEl *repl_consume_lang_el( struct colm_program *prg, struct input_impl_ct *ss, long *bindId, char **data, long *length )
 { 
 	LangEl *klangEl = ss->cons_item->type == ConsItem::ExprType ? 
 			ss->cons_item->langEl : ss->cons_item->prodEl->langEl;
@@ -278,8 +317,8 @@ LangEl *inputStreamConsGetLangEl( struct stream_impl *ss, long *bindId, char **d
 	return klangEl;
 }
 
-int inputStreamConsGetParseBlock( struct stream_impl *ss,
-		int skip, char **pdp, int *copied )
+int repl_get_parse_block( struct colm_program *prg, struct input_impl_ct *ss,
+		int *pskip, char **pdp, int *copied )
 { 
 	*copied = 0;
 
@@ -288,7 +327,7 @@ int inputStreamConsGetParseBlock( struct stream_impl *ss,
 
 	while ( true ) {
 		if ( buf == 0 )
-			return INPUT_EOD;
+			return INPUT_EOF;
 
 		if ( buf->type == ConsItem::ExprType || buf->type == ConsItem::LiteralType )
 			return INPUT_LANG_EL;
@@ -302,16 +341,16 @@ int inputStreamConsGetParseBlock( struct stream_impl *ss,
 			int slen = avail;
 
 			/* Need to skip? */
-			if ( skip > 0 && slen <= skip ) {
+			if ( *pskip > 0 && slen <= *pskip ) {
 				/* Skipping the the whole source. */
-				skip -= slen;
+				*pskip -= slen;
 			}
 			else {
 				/* Either skip is zero, or less than slen. Skip goes to zero.
 				 * Some data left over, copy it. */
-				src += skip;
-				slen -= skip;
-				skip = 0;
+				src += *pskip;
+				slen -= *pskip;
+				*pskip = 0;
 
 				*pdp = src;
 				*copied += slen;
@@ -326,7 +365,7 @@ int inputStreamConsGetParseBlock( struct stream_impl *ss,
 	return INPUT_DATA;
 }
 
-int inputStreamConsGetData( struct stream_impl *ss, char *dest, int length )
+int repl_get_data( struct colm_program *prg, struct input_impl_ct *ss, char *dest, int length )
 { 
 	int copied = 0;
 
@@ -363,7 +402,7 @@ int inputStreamConsGetData( struct stream_impl *ss, char *dest, int length )
 	return copied;
 }
 
-void inputStreamConsBackup( struct stream_impl *ss )
+void repl_backup( struct input_impl_ct *ss )
 {
 	if ( ss->cons_item == 0 )
 		ss->cons_item = ss->constructor->list->tail;
@@ -371,39 +410,14 @@ void inputStreamConsBackup( struct stream_impl *ss )
 		ss->cons_item = ss->cons_item->prev;
 }
 
-void inputStreamConsPushBackBuf( struct stream_impl *ss, struct run_buf *runBuf )
+void repl_undo_consume_lang_el( struct colm_program *prg, struct input_impl_ct *ss )
 {
-	char *data = runBuf->data + runBuf->offset;
-	long length = runBuf->length;
-
-	//cerr << "push back data: ";
-	//cerr.write( data, length );
-	//cerr << endl;
-
-	if ( length == 0 )
-		return;
-
-	/* While pushing back past the current pattern item start. */
-	while ( length > ss->offset ) {
-		length -= ss->offset;
-		if ( ss->offset > 0 ) 
-			assert( memcmp( ss->cons_item->data, data-length, ss->offset ) == 0 );
-		inputStreamConsBackup( ss );
-		ss->offset = ss->cons_item->data.length();
-	}
-
-	ss->offset -= length;
-	assert( memcmp( &ss->cons_item->data[ss->offset], data, length ) == 0 );
-}
-
-void inputStreamConsUndoConsumeLangEl( struct stream_impl *ss )
-{
-	inputStreamConsBackup( ss );
+	repl_backup( ss );
 	ss->offset = ss->cons_item->data.length();
 }
 
-int inputStreamConsConsumeData( program_t *prg, tree_t **sp,
-		struct stream_impl *ss, int length, location_t *loc )
+
+int repl_consume_data( struct colm_program *prg, struct input_impl_ct *ss, int length, location_t *loc )
 {
 	int consumed = 0;
 
@@ -435,7 +449,7 @@ int inputStreamConsConsumeData( program_t *prg, tree_t **sp,
 	return consumed;
 }
 
-int inputStreamConsUndoConsumeData( struct stream_impl *ss, const char *data, int length )
+int repl_undo_consume_data( struct colm_program *prg, struct input_impl_ct *ss, const char *data, int length )
 {
 	int origLen = length;
 	while ( true ) {
@@ -456,16 +470,27 @@ int inputStreamConsUndoConsumeData( struct stream_impl *ss, const char *data, in
 	return origLen;
 }
 
-stream_funcs replFuncs =
+input_funcs_ct repl_funcs =
 {
-	&inputStreamConsGetParseBlock,
-	&inputStreamConsGetData,
-	&inputStreamConsConsumeData,
-	&inputStreamConsUndoConsumeData,
-	0,
-	0,
-	&inputStreamConsGetLangEl,
-	&inputStreamConsUndoConsumeLangEl,
+	&repl_get_parse_block,
+	&repl_get_data,
+
+	&repl_consume_data,
+	&repl_undo_consume_data,
+
+	0, /* consume_tree */
+	0, /* undo_consume_tree. */
+
+	&repl_consume_lang_el,
+	&repl_undo_consume_lang_el,
+
+	0, 0, 0, 0, 0, 0, /* prepend. */
+	0, 0, 0, 0, 0, 0, /* append. */
+
+	&ct_set_eof_mark,
+
+	&ct_transfer_loc_seq,
+	&ct_destructor,
 };
 
 void pushBinding( pda_run *pdaRun, parse_tree_t *parseTree )
@@ -475,14 +500,14 @@ void pushBinding( pda_run *pdaRun, parse_tree_t *parseTree )
 }
 
 extern "C" void internalSendNamedLangEl( program_t *prg, tree_t **sp,
-		struct pda_run *pdaRun, struct stream_impl *is )
+		struct pda_run *pdaRun, struct input_impl *is )
 {
 	/* All three set by consumeLangEl. */
 	long bindId;
 	char *data;
 	long length;
 
-	LangEl *klangEl = is->funcs->consume_lang_el( is, &bindId, &data, &length );
+	LangEl *klangEl = is->funcs->consume_lang_el( prg, is, &bindId, &data, &length );
 	
 	//cerr << "named langEl: " << prg->rtd->lelInfo[klangEl->id].name << endl;
 
@@ -512,7 +537,6 @@ extern "C" void internalInitBindings( pda_run *pdaRun )
 	pdaRun->bindings = new bindings;
 	pdaRun->bindings->push(0);
 }
-
 
 extern "C" void internalPopBinding( pda_run *pdaRun, parse_tree_t *parseTree )
 {

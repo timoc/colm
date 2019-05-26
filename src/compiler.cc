@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -377,6 +377,7 @@ Compiler::Compiler( )
 	argv(0),
 
 	stream(0),
+	inputSel(0),
 	streamSel(0),
 
 	uniqueTypeNil(0),
@@ -386,6 +387,7 @@ Compiler::Compiler( )
 	uniqueTypeStr(0),
 	uniqueTypeIgnore(0),
 	uniqueTypeAny(0),
+	uniqueTypeInput(0),
 	uniqueTypeStream(0),
 	nextPatConsId(0),
 	nextGenericId(1),
@@ -992,28 +994,21 @@ void Compiler::initEmptyScanners()
 }
 
 pda_run *Compiler::parsePattern( program_t *prg, tree_t **sp, const InputLoc &loc, 
-		int parserId, struct stream_impl *sourceStream )
+		int parserId, struct input_impl *sourceStream )
 {
-	struct stream_impl *in = colm_impl_new_generic( strdup("<internal>") );
-
 	struct pda_run *pdaRun = new pda_run;
 	colm_pda_init( prg, pdaRun, pdaTables, parserId, 0, false, 0, false );
 
-	stream_t *stream = colm_stream_new_struct( prg );
-	stream->impl = sourceStream;
-
-	in->funcs->append_stream( in, (tree_t*)stream );
-	in->funcs->set_eof( in );
-
-	long pcr = colm_parse_loop( prg, sp, pdaRun, in, PCR_START );
+	long pcr = colm_parse_loop( prg, sp, pdaRun, sourceStream, PCR_START );
 	assert( pcr == PCR_DONE );
 	if ( pdaRun->parse_error ) {
 		cerr << ( loc.fileName != 0 ? loc.fileName : "<input>" ) <<
 				":" << loc.line << ":" << loc.col;
 
 		if ( pdaRun->parse_error_text != 0 ) {
-			cerr << ": relative error: " << 
-					pdaRun->parse_error_text->tokdata->data;
+			colm_data *tokdata = pdaRun->parse_error_text->tokdata;
+			cerr << ": relative error: ";
+			cerr.write( tokdata->data, tokdata->length );
 		}
 		else {
 			cerr << ": parse error";
@@ -1039,13 +1034,13 @@ void Compiler::parsePatterns()
 
 	for ( ConsList::Iter cons = replList; cons.lte(); cons++ ) {
 		if ( cons->langEl != 0 ) {
-			struct stream_impl *in = colm_impl_new_cons( strdup("<internal>"), cons );
+			struct input_impl *in = colm_impl_new_cons( strdup("<internal>"), cons );
 			cons->pdaRun = parsePattern( prg, sp, cons->loc, cons->langEl->parserId, in );
 		}
 	}
 
 	for ( PatList::Iter pat = patternList; pat.lte(); pat++ ) {
-		struct stream_impl *in = colm_impl_new_pat( strdup("<internal>"), pat );
+		struct input_impl *in = colm_impl_new_pat( strdup("<internal>"), pat );
 		pat->pdaRun = parsePattern( prg, sp, pat->loc, pat->langEl->parserId, in );
 	}
 
@@ -1200,8 +1195,10 @@ void Compiler::compile()
 	beginProcessing();
 	initKeyOps();
 
+	/* Declare types. */
 	declarePass();
 
+	/* Resolve type references. */
 	resolvePass();
 
 	makeTerminalWrappers();
@@ -1225,7 +1222,7 @@ void Compiler::compile()
 	/* Compile bytecode. */
 	compileByteCode();
 
-	/* Make the reduced fsm. */
+	/* Make the reduced scanner. */
 	RedFsmBuild reduce( this, fsmGraph );
 	redFsm = reduce.reduceMachine();
 

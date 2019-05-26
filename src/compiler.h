@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2001-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -152,7 +152,8 @@ struct Production
 	: 
 		prodName(0), prodElList(0), prodCommit(false), redBlock(0),
 		prodId(0), prodNum(0), fsm(0), fsmLength(0), uniqueEmptyLeader(0),
-		isLeftRec(false), localFrame(0), lhsField(0), predOf(0) {}
+		isLeftRec(false), localFrame(0), lhsField(0), predOf(0)
+	{}
 
 	static Production* cons( const InputLoc &loc, LangEl *prodName, ProdElList *prodElList, 
 			String name, bool prodCommit, CodeBlock *redBlock, int prodId, int prodNum )
@@ -160,7 +161,7 @@ struct Production
 		Production *p = new Production;
 		p->loc = loc;
 		p->prodName = prodName;
-		p->name = name;
+		p->_name = name;
 		p->prodElList = prodElList;
 		p->prodCommit = prodCommit;
 		p->redBlock = redBlock;
@@ -172,7 +173,7 @@ struct Production
 	InputLoc loc;
 	LangEl *prodName;
 	ProdElList *prodElList;
-	String name;
+	String _name;
 	bool prodCommit;
 
 	CodeBlock *redBlock;
@@ -679,6 +680,8 @@ struct Compiler
 	void findReductionActionProds();
 	void resolveReducers();
 
+	Production *findProductionByLabel( LangEl *langEl, String label );
+
 	void declarePass();
 	void resolvePass();
 
@@ -759,7 +762,7 @@ struct Compiler
 
 	void prepGrammar();
 	struct pda_run *parsePattern( program_t *prg, tree_t **sp, const InputLoc &loc,
-			int parserId, struct stream_impl *sourceStream );
+			int parserId, struct input_impl *sourceStream );
 	void parsePatterns();
 
 	void collectParserEls( LangElSet &parserEls );
@@ -800,10 +803,12 @@ struct Compiler
 	void addStdout();
 	void addStderr();
 	void addArgv();
+	void addStds();
 	void addError();
 	void addDefineArgs();
 	int argvOffset();
 	int arg0Offset();
+	int stdsOffset();
 	void makeDefaultIterators();
 	void addLengthField( ObjectDef *objDef, code_t getLength );
 	ObjectDef *findObject( const String &name );
@@ -891,7 +896,6 @@ struct Compiler
 	GenericType *anyVector;
 
 	LangEl *ptrLangEl;
-	LangEl *voidLangEl;
 	LangEl *strLangEl;
 	LangEl *anyLangEl;
 	LangEl *rootLangEl;
@@ -904,6 +908,10 @@ struct Compiler
 
 	int nextLelId;
 	int firstNonTermId;
+	int firstStructElId;
+	int structInbuiltId;
+	int structInputId;
+	int structStreamId;
 
 	LangEl **langElIndex;
 	PdaState *actionDestState;
@@ -921,10 +929,14 @@ struct Compiler
 	ObjectDef *globalObjectDef;
 	ObjectField *arg0;
 	ObjectField *argv;
+	ObjectField *stds;
 	StructDef *argvEl;
 	StructEl *argvElSel;
+	StructEl *stdsElSel;
 
+	StructDef *input;
 	StructDef *stream;
+	StructEl *inputSel;
 	StructEl *streamSel;
 
 	VectorTypeIdMap vectorTypeIdMap;
@@ -949,6 +961,7 @@ struct Compiler
 	UniqueType *uniqueTypeIgnore;
 	UniqueType *uniqueTypeAny;
 
+	UniqueType *uniqueTypeInput;
 	UniqueType *uniqueTypeStream;
 
 	UniqueTypeMap uniqeTypeMap;
@@ -958,6 +971,9 @@ struct Compiler
 	void declareGlobalFields();
 	void declareStrFields();
 
+	void declareInputField( ObjectDef *objDef, code_t getLength );
+	void declareInputFields();
+
 	void declareStreamField( ObjectDef *objDef, code_t getLength );
 	void declareStreamFields();
 
@@ -966,6 +982,7 @@ struct Compiler
 
 	ObjectDef *intObj;
 	ObjectDef *strObj;
+	ObjectDef *inputObj;
 	ObjectDef *streamObj;
 
 	struct fsm_tables *fsmTables;
@@ -995,8 +1012,10 @@ struct Compiler
 	CodeVect unwindCode;
 
 	ObjectField *makeDataEl();
-	ObjectField *makePosEl();
+	ObjectField *makeFileEl();
 	ObjectField *makeLineEl();
+	ObjectField *makeColEl();
+	ObjectField *makePosEl();
 
 	IterDef *findIterDef( IterDef::Type type, GenericType *generic );
 	IterDef *findIterDef( IterDef::Type type, Function *func );
@@ -1027,6 +1046,7 @@ struct Compiler
 	long nextMatchEndNum;
 
 	TypeRef *argvTypeRef;
+	TypeRef *stdsTypeRef;
 
 	bool inContiguous;
 	int contiguousOffset;
@@ -1036,7 +1056,7 @@ struct Compiler
 
 	void initReductionNeeds( Reduction *reduction );
 
-	void findRhsRefs( bool &lhsUsed, Vector<ProdEl*> &rhsUsed,
+	void findRhsRefs( bool &lhsUsed, Vector<ProdEl*> &rhsUsed, Vector<ProdEl*> &treeUsed,
 			Vector<ProdEl*> &locUsed, Reduction *reduction, Production *production,
 			const ReduceTextItemList &list );
 
@@ -1058,9 +1078,11 @@ struct Compiler
 	void writeCommit();
 	void writeReduceStructs();
 	void writeReduceDispatchers();
+	void writeUnescape();
 
 	void writeLhsRef( Production *production, ReduceTextItem *i );
 	void writeRhsRef( Production *production, ReduceTextItem *i );
+	void writeTreeRef( Production *production, ReduceTextItem *i );
 	void writeRhsLoc( Production *production, ReduceTextItem *i );
 	void writeHostItemList( Production *production, const ReduceTextItemList &list );
 	void writeCommitStub();
@@ -1099,32 +1121,35 @@ void declareTypeAlias( Compiler *pd, Namespace *nspace,
 LangEl *findType( Compiler *pd, Namespace *nspace, const String &data );
 
 ObjectMethod *initFunction( UniqueType *retType, ObjectDef *obj, 
-		const String &name, int methIdWV, int methIdWC,
+		ObjectMethod::Type type, const String &name, int methIdWV, int methIdWC,
 		bool isConst, bool useFnInstr = false, GenericType *useGeneric = 0 );
 
 ObjectMethod *initFunction( UniqueType *retType, ObjectDef *obj, 
-		const String &name, int methIdWV, int methIdWC,
+		ObjectMethod::Type type, const String &name, int methIdWV, int methIdWC,
 		UniqueType *arg1, bool isConst, bool useFnInstr = false,
 		GenericType *useGeneric = 0 );
 
 ObjectMethod *initFunction( UniqueType *retType, ObjectDef *obj, 
-		const String &name, int methIdWV, int methIdWC, 
+		ObjectMethod::Type type, const String &name, int methIdWV, int methIdWC, 
 		UniqueType *arg1, UniqueType *arg2, bool isConst,
 		bool useFnInstr = false, GenericType *useGeneric = 0 );
 
 ObjectMethod *initFunction( UniqueType *retType, Namespace *nspace, ObjectDef *obj, 
-		const String &name, int methIdWV, int methIdWC,
+		ObjectMethod::Type type, const String &name, int methIdWV, int methIdWC,
 		bool isConst, bool useFnInstr = false, GenericType *useGeneric = 0 );
 
 ObjectMethod *initFunction( UniqueType *retType, Namespace *nspace, ObjectDef *obj, 
-		const String &name, int methIdWV, int methIdWC,
+		ObjectMethod::Type type, const String &name, int methIdWV, int methIdWC,
 		UniqueType *arg1, bool isConst, bool useFnInstr = false,
 		GenericType *useGeneric = 0 );
 
 ObjectMethod *initFunction( UniqueType *retType, Namespace *nspace, ObjectDef *obj, 
-		const String &name, int methIdWV, int methIdWC, 
+		ObjectMethod::Type type, const String &name, int methIdWV, int methIdWC, 
 		UniqueType *arg1, UniqueType *arg2, bool isConst,
 		bool useFnInstr = false, GenericType *useGeneric = 0 );
+
+extern "C" struct input_impl *colm_impl_new_pat( char *name, struct Pattern *pattern );
+extern "C" struct input_impl *colm_impl_new_cons( char *name, struct Constructor *constructor );
 
 #endif /* _COLM_PARSEDATA_H */
 

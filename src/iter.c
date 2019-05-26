@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2014 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -51,8 +51,10 @@ void colm_list_iter_destroy( program_t *prg, tree_t ***psp, generic_iter_t *iter
 		long cur_stack_size = vm_ssize() - iter->root_size;
 		assert( iter->yield_size == cur_stack_size );
 		vm_popn( iter->yield_size );
-		for ( i = 0; i < iter->arg_size; i++ )
-			colm_tree_downref( prg, sp, vm_pop_tree() );
+		for ( i = 0; i < iter->arg_size; i++ ) {
+			//colm_tree_downref( prg, sp, vm_pop_tree() );
+			vm_pop_value();
+		}
 		iter->type = 0;
 		*psp = sp;
 	}
@@ -169,7 +171,7 @@ value_t colm_viter_deref_cur( program_t *prg, generic_iter_t *iter )
 
 	value_t value = colm_struct_get_field( s, value_t, 0 );
 	if ( gi->value_type == TYPE_TREE )
-		colm_tree_upref( (tree_t*)value );
+		colm_tree_upref( prg, (tree_t*)value );
 
 	return value;
 }

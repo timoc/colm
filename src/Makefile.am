@@ -1,5 +1,5 @@
 #
-# Copyright 2007-2013 Adrian Thurston <thurston@complang.org>
+# Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
 #
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -28,7 +28,7 @@ bin_PROGRAMS = colm
 noinst_PROGRAMS = bootstrap0 bootstrap1
 
 RUNTIME_SRC = \
-	map.c pdarun.c list.c input.c debug.c \
+	map.c pdarun.c list.c input.c stream.c debug.c \
 	codevect.c pool.c string.c tree.c iter.c \
 	bytecode.c program.c struct.c commit.c \
 	print.c
@@ -42,7 +42,11 @@ lib_LTLIBRARIES = libcolm.la
 noinst_LIBRARIES = libprog.a
 
 libcolm_la_SOURCES = $(RUNTIME_SRC)
-libcolm_la_LDFLAGS = -release ${PACKAGE_VERSION}
+libcolm_la_LDFLAGS = -release ${PACKAGE_VERSION} -no-undefined
+
+if LINKER_NO_UNDEFINED
+libcolm_la_LDFLAGS += -Wl,--no-undefined
+endif
 
 common_CFLAGS = \
 	-Wall \
@@ -89,14 +93,14 @@ colmincdir = $(includedir)/colm
 
 colminc_HEADERS = $(RUNTIME_HDR)
 
-gen/parse1.c: bootstrap0
+gen/parse1.c: bootstrap0$(EXEEXT)
 	mkdir -p gen
 	$(builddir)/bootstrap0 -c -o gen/parse1.c -e gen/if1.h -x gen/if1.cc
 
 gen/if1.h: gen/parse1.c
 gen/if1.cc: gen/parse1.c
 
-gen/parse2.c: bootstrap1 colm.lm
+gen/parse2.c: bootstrap1$(EXEEXT) colm.lm
 	mkdir -p gen
 	$(builddir)/bootstrap1 -c -o gen/parse2.c -e gen/if2.h -x gen/if2.cc colm.lm
 

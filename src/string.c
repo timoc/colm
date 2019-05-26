@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -55,9 +55,9 @@ tree_t *construct_string( program_t *prg, head_t *s )
 
 /* 
  * In this system strings are not null terminated. Often strings come from a
- * parse, in which case the string is just a pointer into the the data string.
- * A block in a parsed stream can house many tokens and there is no room for
- * nulls.
+ * parse, in which case the string is just a pointer into the the data stream.
+ * A block in a parsed stream can hold many tokens and there is no room
+ * allocated for nulls.
  */
 
 head_t *string_copy( program_t *prg, head_t *head )

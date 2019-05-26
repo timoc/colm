@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2014 Adrian Thurston <thurston@colm.net>
+ * Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -133,15 +133,24 @@ void BaseParser::init()
 	pd->global = new StructDef( internal, global, pd->globalObjectDef );
 	pd->globalSel = declareStruct( pd, 0, global, pd->global );
 
+	/* Setup the input object. */
+	global = "_input";
+	ObjectDef *objectDef = ObjectDef::cons( ObjectDef::BuiltinType,
+			global, pd->nextObjectId++ ); 
+
+	pd->input = new StructDef( internal, global, objectDef );
+	pd->inputSel = declareStruct( pd, pd->rootNamespace,
+			pd->input->name, pd->input );
+
 	/* Setup the stream object. */
 	global = "stream";
-	ObjectDef *objectDef = ObjectDef::cons( ObjectDef::BuiltinType,
+	objectDef = ObjectDef::cons( ObjectDef::BuiltinType,
 			global, pd->nextObjectId++ ); 
 
 	pd->stream = new StructDef( internal, global, objectDef );
 	pd->streamSel = declareStruct( pd, pd->rootNamespace,
 			pd->stream->name, pd->stream );
-	
+
 	/* Initialize the dictionary of graphs. This is our symbol table. The
 	 * initialization needs to be done on construction which happens at the
 	 * beginning of a machine spec so any assignment operators can reference
@@ -163,6 +172,7 @@ void BaseParser::init()
 
 	/* Internal variables. */
 	addArgvList();
+	addStdsList();
 }
 
 void BaseParser::addRegularDef( const InputLoc &loc, Namespace *nspace,
@@ -446,6 +456,13 @@ void BaseParser::addArgvList()
 	TypeRef *valType = TypeRef::cons( internal, pd->uniqueTypeStr );
 	TypeRef *elType = TypeRef::cons( internal, TypeRef::ListEl, valType );
 	pd->argvTypeRef = TypeRef::cons( internal, TypeRef::List, 0, elType, valType );
+}
+
+void BaseParser::addStdsList()
+{
+	TypeRef *valType = TypeRef::cons( internal, pd->uniqueTypeStream );
+	TypeRef *elType = TypeRef::cons( internal, TypeRef::ListEl, valType );
+	pd->stdsTypeRef = TypeRef::cons( internal, TypeRef::List, 0, elType, valType );
 }
 
 ObjectDef *BaseParser::blockOpen()
@@ -957,8 +974,17 @@ LangExpr *BaseParser::match( const InputLoc &loc, LangVarRef *varRef,
 			list, pd->nextPatConsId++ );
 	pd->patternList.append( pattern );
 
-	LangExpr *expr = LangExpr::cons( LangTerm::cons( 
-			InputLoc(), LangTerm::MatchType, varRef, pattern ) );
+	LangExpr *expr = LangExpr::cons( LangTerm::consMatch( 
+			InputLoc(), varRef, pattern ) );
+
+	return expr;
+}
+
+LangExpr *BaseParser::prodCompare( const InputLoc &loc, LangVarRef *varRef,
+		const String &prod, LangExpr *matchExpr )
+{
+	LangExpr *expr = LangExpr::cons( LangTerm::consProdCompare( 
+			InputLoc(), varRef, prod, matchExpr ) );
 
 	return expr;
 }
@@ -996,8 +1022,8 @@ LangExpr *BaseParser::require( const InputLoc &loc,
 			list, pd->nextPatConsId++ );
 	pd->patternList.append( pattern );
 
-	LangExpr *expr = LangExpr::cons( LangTerm::cons(
-			InputLoc(), LangTerm::MatchType, varRef, pattern ) );
+	LangExpr *expr = LangExpr::cons( LangTerm::consMatch(
+			InputLoc(), varRef, pattern ) );
 	return expr;
 }
 

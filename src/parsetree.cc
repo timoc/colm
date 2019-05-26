@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -122,6 +122,7 @@ int CmpUniqueType::compare( const UniqueType &ut1, const UniqueType &ut2 )
 		case TYPE_BOOL:
 		case TYPE_LIST_PTRS:
 		case TYPE_MAP_PTRS:
+		case TYPE_VOID:
 			break;
 
 		case TYPE_STRUCT:

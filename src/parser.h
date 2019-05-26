@@ -1,5 +1,5 @@
 /*
- * Copyright 2013 Adrian Thurston <thurston@colm.net>
+ * Copyright 2013-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -87,6 +87,7 @@ struct BaseParser
 			ProdElList *prodElList, bool commit,
 			CodeBlock *redBlock, LangEl *predOf );
 	void addArgvList();
+	void addStdsList();
 	LexJoin *literalJoin( const InputLoc &loc, const String &data );
 
 	Reduction *createReduction( const InputLoc loc, const String &name );
@@ -156,9 +157,12 @@ struct BaseParser
 			ConsItemList *list, TypeRef *typeRef, FieldInitVect *fieldInitVect );
 	LangExpr *match( const InputLoc &loc, LangVarRef *varRef,
 			PatternItemList *list );
+	LangExpr *prodCompare( const InputLoc &loc, LangVarRef *varRef,
+			const String &prod, LangExpr *matchExpr );
 	LangStmt *varDef( ObjectField *objField,
 			LangExpr *expr, LangStmt::Type assignType );
 	LangStmt *exportStmt( ObjectField *objField, LangStmt::Type assignType, LangExpr *expr );
+
 
 	LangExpr *require( const InputLoc &loc, LangVarRef *varRef, PatternItemList *list );
 	void structVarDef( const InputLoc &loc, ObjectField *objField );

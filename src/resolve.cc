@@ -1,5 +1,5 @@
 /*
- * Copyright 2009-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2009-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -21,12 +21,11 @@
  */
 
 #include <stdbool.h>
-
 #include <iostream>
-
 #include "compiler.h"
+
 /*
- * Type Resolution.
+ * Type Resolve.
  */
 
 using std::cout;
@@ -514,6 +513,12 @@ void LangTerm::resolve( Compiler *pd )
 		case StringType:
 			break;
 
+		case ProdCompareType:
+			/* If it has a match expression go into that. */
+			if ( expr != 0 )
+				expr->resolve( pd );
+			break;
+
 		case MatchType:
 			for ( PatternItemList::Iter item = *pattern->list; item.lte(); item++ ) {
 				switch ( item->form ) {
@@ -555,6 +560,10 @@ void LangTerm::resolve( Compiler *pd )
 			break;
 
 		case SendType:
+//			for ( CallArgVect::Iter pex = exprPtrVect->last(); pex.gtb(); pex-- )
+//				(*pex)->expr->resolve( pd );
+			parserText->list->resolve( pd );
+			break;
 		case SendTreeType:
 		case EmbedStringType:
 			break;
@@ -619,20 +628,6 @@ void LangStmt::resolveForIter( Compiler *pd ) const
 void LangStmt::resolve( Compiler *pd ) const
 {
 	switch ( type ) {
-		case PrintType: 
-		case PrintXMLACType:
-		case PrintXMLType:
-		case PrintStreamType:
-		case PrintDumpType: {
-			/* Push the args backwards. */
-			for ( CallArgVect::Iter pex = exprPtrVect->last(); pex.gtb(); pex-- )
-				(*pex)->expr->resolve( pd );
-			break;
-		}
-		case PrintAccum: {
-			consItemList->resolve( pd );
-			break;
-		}
 		case ExprType: {
 			/* Evaluate the exrepssion, then pop it immediately. */
 			expr->resolve( pd );
@@ -901,6 +896,15 @@ void Compiler::resolveReductionActions()
 	}
 }
 
+Production *Compiler::findProductionByLabel( LangEl *langEl, String label )
+{
+	for ( LelDefList::Iter ldi = langEl->defList; ldi.lte(); ldi++ ) {
+		if ( ldi->_name != 0 && ( strcmp( ldi->_name, label ) == 0 ) )
+			return ldi;
+	}
+	return 0;
+}
+
 void Compiler::findReductionActionProds()
 {
 	for ( ReductionVect::Iter r = rootNamespace->reductions; r.lte(); r++ ) {
@@ -908,13 +912,7 @@ void Compiler::findReductionActionProds()
 			rai->nonTerm->resolveType( this );
 			LangEl *langEl = rai->nonTerm->uniqueType->langEl;
 
-			Production *prod = 0;
-			for ( LelDefList::Iter ldi = langEl->defList; ldi.lte(); ldi++ ) {
-				if ( strcmp( ldi->name, rai->prod ) == 0 ) {
-					prod = ldi;
-					break;
-				}
-			}
+			Production *prod = findProductionByLabel( langEl, rai->prod );
 
 			if ( prod == 0 ) {
 				error(rai->loc) << "could not find production \"" <<
@@ -960,6 +958,9 @@ void Compiler::resolvePass()
 
 	UniqueType *argvUT = argvTypeRef->resolveType( this );
 	argvElSel = argvUT->generic->elUt->structEl;
+
+	UniqueType *stdsUT = stdsTypeRef->resolveType( this );
+	stdsElSel = stdsUT->generic->elUt->structEl;
 
 	resolveReductionActions();
 

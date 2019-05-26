@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 Adrian Thurston <thurston@colm.net>
+ * Copyright 2015-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -43,17 +43,18 @@ void Compiler::writeCommitStub()
 		"int " << objectName << "_reducer_need_ign( program_t *prg, "
 				"struct pda_run *pda_run ) { return COLM_RN_BOTH; }\n"
 		"\n"
-		"void " << objectName << "_read_reduce( program_t *prg, int reducer, stream_t *stream ) {}\n"
+		"void " << objectName << "_read_reduce( program_t *prg, int reducer, input_t *stream ) {}\n"
 	;
 }
 
-void Compiler::findRhsRefs( bool &lhsUsed, Vector<ProdEl*> &rhsUsed,
+void Compiler::findRhsRefs( bool &lhsUsed, Vector<ProdEl*> &rhsUsed, Vector<ProdEl*> &treeUsed,
 		Vector<ProdEl*> &locUsed, Reduction *reduction, Production *production,
 		const ReduceTextItemList &list )
 {
 	ObjectDef *objectDef = production->prodName->objectDef;
 
 	rhsUsed.setAsNew( production->prodElList->length() );
+	treeUsed.setAsNew( production->prodElList->length() );
 	locUsed.setAsNew( production->prodElList->length() );
 
 	for ( ReduceTextItemList::Iter i = list; i.lte(); i++ ) {
@@ -61,7 +62,10 @@ void Compiler::findRhsRefs( bool &lhsUsed, Vector<ProdEl*> &rhsUsed,
 			lhsUsed = true;
 		}
 
-		if ( i->type == ReduceTextItem::RhsRef || i->type == ReduceTextItem::RhsLoc ) {
+		if ( i->type == ReduceTextItem::RhsRef ||
+				i->type == ReduceTextItem::RhsLoc ||
+				i->type == ReduceTextItem::TreeRef )
+		{
 			if ( i->n > 0 ) {
 				/* Numbered. */
 				ProdEl *prodEl = production->prodElList->head;
@@ -73,6 +77,8 @@ void Compiler::findRhsRefs( bool &lhsUsed, Vector<ProdEl*> &rhsUsed,
 
 				if ( i->type == ReduceTextItem::RhsLoc )
 					locUsed[i->n-1] = prodEl;
+				else if ( i->type == ReduceTextItem::TreeRef )
+					treeUsed[i->n-1] = prodEl;
 				else
 					rhsUsed[i->n-1] = prodEl;
 			}
@@ -100,9 +106,10 @@ void Compiler::computeNeeded( Reduction *reduction, Production *production,
 {
 	bool lhsUsed = false;
 	Vector<ProdEl*> rhsUsed;
+	Vector<ProdEl*> treeUsed;
 	Vector<ProdEl*> locUsed;
 
-	findRhsRefs( lhsUsed, rhsUsed, locUsed, reduction, production, list );
+	findRhsRefs( lhsUsed, rhsUsed, treeUsed, locUsed, reduction, production, list );
 
 	/* Same length, can concurrently walk with one test. */
 	Vector<ProdEl*>::Iter rhs = rhsUsed;
@@ -126,9 +133,10 @@ void Compiler::loadRefs( Reduction *reduction, Production *production,
 {
 	bool lhsUsed = false;
 	Vector<ProdEl*> rhsUsed;
+	Vector<ProdEl*> treeUsed;
 	Vector<ProdEl*> locUsed;
 
-	findRhsRefs( lhsUsed, rhsUsed, locUsed, reduction, production, list );
+	findRhsRefs( lhsUsed, rhsUsed, treeUsed, locUsed, reduction, production, list );
 
 	if ( lhsUsed ) {
 		*outStream << "	lel_" << production->prodName->fullName << " *_lhs = ";
@@ -200,15 +208,20 @@ void Compiler::loadRefs( Reduction *reduction, Production *production,
 		}
 	}
 
-	/* In the second pass we load using a tree cursor. This is for token data
-	 * and locations.
-	 */
+	/* In the second pass we load using a tree cursor. This is for token/tree
+	 * data and locations. */
 
 	useCursor = false;
 	for ( Vector<ProdEl*>::Iter rhs = rhsUsed; rhs.lte(); rhs++ ) {
 		if ( *rhs != 0 && (*rhs)->production == production &&
 				(*rhs)->langEl->type == LangEl::Term )
 		{
+			useCursor = true;
+			break;
+		}
+	}
+	for ( Vector<ProdEl*>::Iter rhs = treeUsed; rhs.lte(); rhs++ ) {
+		if ( *rhs != 0 ) {
 			useCursor = true;
 			break;
 		}
@@ -234,12 +247,12 @@ void Compiler::loadRefs( Reduction *reduction, Production *production,
 
 		/* Same length, can concurrently walk with one test. */
 		Vector<ProdEl*>::Iter rhs = rhsUsed;
+		Vector<ProdEl*>::Iter tree = treeUsed;
 		Vector<ProdEl*>::Iter loc = locUsed;
 		
 		for ( ; rhs.lte(); rhs++, loc++ ) {
 
 			ProdEl *prodEl = *rhs;
-
 			if ( prodEl != 0 ) {
 				if ( prodEl->production == production ) {
 					if ( prodEl->langEl->type == LangEl::Term ) {
@@ -262,7 +275,20 @@ void Compiler::loadRefs( Reduction *reduction, Production *production,
 						}
 					}
 				}
+			}
 
+			ProdEl *treeEl = *tree;
+			if ( treeEl != 0 ) {
+				if ( treeEl->production == production ) {
+					while ( cursorPos < rhs.pos() ) {
+						*outStream <<
+							"	_tree_cursor = _tree_cursor->next;\n";
+						cursorPos += 1;
+					}
+
+					*outStream << "	colm_tree *_tree" << rhs.pos() << " = ";
+					*outStream << "_tree_cursor->tree;\n";
+				}
 			}
 
 			ProdEl *locEl = *loc;
@@ -313,6 +339,28 @@ void Compiler::writeRhsRef( Production *production, ReduceTextItem *i )
 	}
 }
 
+void Compiler::writeTreeRef( Production *production, ReduceTextItem *i )
+{
+	if ( i->n > 0 ) {
+		*outStream << "_tree" << ( i->n - 1 );
+	}
+	else {
+		ObjectDef *objectDef = production->prodName->objectDef;
+		String name( i->txt.data + 1, i->txt.length() - 1 );
+
+		/* Find the field in the rhsVal using capture field. */
+		ObjectField *field = objectDef->rootScope->findField( name );
+		if ( field != 0 ) {
+			for ( Vector<RhsVal>::Iter r = field->rhsVal;
+					r.lte(); r++ )
+			{
+				if ( r->prodEl->production == production )
+					*outStream << "_tree" << r->prodEl->pos;
+			}
+		}
+	}
+}
+
 void Compiler::writeRhsLoc( Production *production, ReduceTextItem *i )
 {
 	if ( i->n > 0 ) {
@@ -351,6 +399,9 @@ void Compiler::writeHostItemList( Production *production,
 			case ReduceTextItem::RhsRef:
 				writeRhsRef( production, i );
 				break;
+			case ReduceTextItem::TreeRef:
+				writeTreeRef( production, i );
+				break;
 			case ReduceTextItem::RhsLoc:
 				writeRhsLoc( production, i );
 				break;
@@ -373,7 +424,7 @@ struct CmpReduceAction
 		else {
 			if ( ra1->production->prodNum < ra2->production->prodNum )
 				return -1;
-			else if ( ra1->production->prodNum < ra2->production->prodNum )
+			else if ( ra1->production->prodNum > ra2->production->prodNum )
 				return 1;
 		}
 		return 0;
@@ -400,7 +451,7 @@ void Compiler::writeNeeds()
 		"\n";
 
 	*outStream <<
-		"struct reduction_info ri[" << rootNamespace->reductions.length() + 1 << "];\n"
+		"static struct reduction_info ri[" << rootNamespace->reductions.length() + 1 << "];\n"
 		"\n";
 
 	*outStream <<
@@ -435,7 +486,7 @@ void Compiler::writeNeeds()
 		"extern \"C\" int " << objectName << "_reducer_need_tok( program_t *prg, "
 				"struct pda_run *pda_run, int id )\n"
 		"{\n"
-		"	if ( pda_run->reducer > 0 ) {\n"
+		"	if ( prg->reduce_clean && pda_run->reducer > 0 ) {\n"
 		/* Note we are forcing the reducer need for data. Enabling requires finding
 		 * a solution for backtracking push. */
 		"		return COLM_RN_DATA | ri[pda_run->reducer].need_data[id] | \n"
@@ -505,7 +556,13 @@ void Compiler::writeReduceStructs()
 		"	read_reduce_node *next;\n"
 		"	read_reduce_node *child;\n"
 		"};\n"
-		"\n"
+		"\n";
+}
+
+
+void Compiler::writeUnescape()
+{
+	*outStream <<
 		"static void unescape( colm_data *tokdata )\n"
 		"{\n"
 		"	unsigned char *src = (unsigned char*)tokdata->data, *dest = (unsigned char*)tokdata->data;\n"
@@ -694,9 +751,11 @@ void Compiler::writeParseReduce( Reduction *reduction )
 		"	}\n"
 		"\n"
 		"	commit_clear_parse_tree( prg, sp, pda_run, lel->child );\n"
-		"	commit_clear_kid_list( prg, sp, kid->tree->child );\n"
-		"	kid->tree->child = 0;\n"
-		"	kid->tree->flags &= ~( AF_LEFT_IGNORE | AF_RIGHT_IGNORE );\n"
+		"	if ( prg->reduce_clean ) {\n"
+		"		commit_clear_kid_list( prg, sp, kid->tree->child );\n"
+		"		kid->tree->child = 0;\n"
+		"		kid->tree->flags &= ~( AF_LEFT_IGNORE | AF_RIGHT_IGNORE );\n"
+		"	}\n"
 		"	lel->child = 0;\n"
 		"\n"
 		"	if ( sp != root )\n"
@@ -842,10 +901,15 @@ void Compiler::writePostfixReduce( Reduction *reduction )
 
 void Compiler::writePostfixReduce()
 {
+	bool unescape = false;
 	for ( ReductionVect::Iter r = rootNamespace->reductions; r.lte(); r++ ) {
 		Reduction *reduction = *r;
-		if ( reduction->postfixBased )
+		if ( reduction->postfixBased ) {
+			if ( !unescape )
+				writeUnescape();
+
 			writePostfixReduce( reduction );
+		}
 	}
 }
 
@@ -867,7 +931,8 @@ void Compiler::writeCommit()
 		"#include <errno.h>\n"
 		"\n"
 		"#include <iostream>\n"
-		"#include <ext/stdio_filebuf.h>\n"
+		/* Not available on MAC OS. */
+		// "#include <ext/stdio_filebuf.h>\n"
 		"#include <fstream>\n"
 		"\n"
 		"using std::endl;\n"
@@ -881,7 +946,7 @@ void Compiler::writeCommit()
 	
 	writeReduceDispatchers();
 
-	writePostfixReduce();
+	//writePostfixReduce();
 
 	writeParseReduce();
 

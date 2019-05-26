@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2016 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -38,6 +38,7 @@ extern "C" {
 typedef unsigned long ulong;
 typedef unsigned char uchar;
 
+#define IN_NONE                  0x00
 #define IN_LOAD_INT              0x01
 #define IN_LOAD_STR              0x02
 #define IN_LOAD_NIL              0x03
@@ -104,6 +105,7 @@ typedef unsigned char uchar;
 
 #define IN_REJECT                0x21
 #define IN_MATCH                 0x22
+#define IN_PROD_NUM              0x6a
 #define IN_CONSTRUCT             0x23
 #define IN_CONS_OBJECT           0xf0
 #define IN_CONS_GENERIC          0xf1
@@ -140,8 +142,10 @@ typedef unsigned char uchar;
 #define IN_SET_TOKEN_DATA_WV     0x38
 #define IN_SET_TOKEN_DATA_BKT    0x39
 
-#define IN_GET_TOKEN_POS_R       0x3a
+#define IN_GET_TOKEN_FILE_R      0x80
 #define IN_GET_TOKEN_LINE_R      0x3b
+#define IN_GET_TOKEN_POS_R       0x3a
+#define IN_GET_TOKEN_COL_R       0x81
 
 #define IN_INIT_RHS_EL           0x3c
 #define IN_INIT_LHS_EL           0x3d
@@ -220,19 +224,9 @@ typedef unsigned char uchar;
 #define IN_GET_MAP_MEM_WC        0x7e
 #define IN_GET_MAP_MEM_BKT       0x7f
 
-#define IN_VECTOR_LENGTH         0x80
-#define IN_VECTOR_APPEND_WV      0x81
-#define IN_VECTOR_APPEND_WC      0x82
-#define IN_VECTOR_APPEND_BKT     0x83
-#define IN_VECTOR_INSERT_WV      0x84
-#define IN_VECTOR_INSERT_WC      0x85
-#define IN_VECTOR_INSERT_BKT     0x86
-
-#define IN_PRINT                 0x87
-#define IN_PRINT_XML_AC          0x88
-#define IN_PRINT_XML             0x89
-#define IN_PRINT_STREAM          0x8a
-#define IN_PRINT_DUMP            0xf6
+#define IN_TREE_TO_STR_XML       0x6e
+#define IN_TREE_TO_STR_XML_AC    0x6f
+#define IN_TREE_TO_STR_POSTFIX   0xb6
 
 #define IN_HOST                  0xea
 
@@ -241,7 +235,6 @@ typedef unsigned char uchar;
 #define IN_RET                   0x8e
 #define IN_YIELD                 0x8f
 #define IN_HALT                  0x8b
-
 
 #define IN_INT_TO_STR            0x97
 #define IN_TREE_TO_STR           0x98
@@ -259,36 +252,29 @@ typedef unsigned char uchar;
 
 #define IN_INPUT_CLOSE_WC        0xef
 
-#define IN_PARSE_LOAD            0xa0
+#define IN_PARSE_FRAG_W          0xa2
 #define IN_PARSE_INIT_BKT        0xa1
-
-#define IN_PARSE_FRAG_WC         0xa2
-#define IN_PARSE_FRAG_EXIT_WC    0xa3
-
-#define IN_PARSE_FRAG_WV         0xa4
-#define IN_PARSE_FRAG_EXIT_WV    0xa5
-
 #define IN_PARSE_FRAG_BKT        0xa6
-#define IN_PARSE_FRAG_EXIT_BKT   0xa7
 
-#define IN_PARSE_APPEND_WC       0xa8
-#define IN_PARSE_APPEND_WV       0xa9
-#define IN_PARSE_APPEND_BKT      0xaa
+#define IN_SEND_NOTHING     0xa0
+#define IN_SEND_TEXT_W      0x89
+#define IN_SEND_TEXT_BKT    0x8a
 
-#define IN_PARSE_APPEND_STREAM_WC  0x96
-#define IN_PARSE_APPEND_STREAM_WV  0x90
-#define IN_PARSE_APPEND_STREAM_BKT 0x1c
+#define IN_PRINT_TREE       0xa3
 
-#define IN_PARSE_FINISH_WC       0xab
-#define IN_PARSE_FINISH_EXIT_WC  0xac
+#define IN_SEND_TREE_W      0xa9
+#define IN_SEND_TREE_BKT    0xaa
 
-#define IN_PARSE_FINISH_WV       0xad
-#define IN_PARSE_FINISH_EXIT_WV  0xae
+#define IN_REPLACE_STREAM   0x88
 
-#define IN_PARSE_FINISH_BKT      0xaf
-#define IN_PARSE_FINISH_EXIT_BKT 0xb0
+#define IN_SEND_STREAM_W    0x90
+#define IN_SEND_STREAM_BKT  0x1c
 
-#define IN_PCR_CALL              0xb1
+#define IN_SEND_EOF_W       0x87
+#define IN_SEND_EOF_BKT     0xa4
+
+#define IN_REDUCE_COMMIT         0xa5
+
 #define IN_PCR_RET               0xb2
 #define IN_PCR_END_DECK          0xb3
 
@@ -317,8 +303,7 @@ typedef unsigned char uchar;
 #define IN_LOAD_CONTEXT_BKT      0xcb
 
 #define IN_SET_PARSER_CONTEXT    0xd0
-
-#define IN_SPRINTF               0xd6
+#define IN_SET_PARSER_INPUT      0x96
 
 #define IN_GET_RHS_VAL_R         0xd7
 #define IN_GET_RHS_VAL_WC        0xd8
@@ -329,12 +314,10 @@ typedef unsigned char uchar;
 #define IN_SET_RHS_VAL_BKT       0xdd
 
 #define IN_GET_PARSER_MEM_R      0x5b
-#define IN_GET_PARSER_MEM_WC     0x00
-#define IN_GET_PARSER_MEM_WV     0x00
-#define IN_GET_PARSER_MEM_BKT    0x00
-#define IN_SET_PARSER_MEM_WC     0x00
-#define IN_SET_PARSER_MEM_WV     0x00
-#define IN_SET_PARSER_MEM_BKT    0x00
+
+#define IN_GET_STREAM_MEM_R      0xb7
+
+#define IN_GET_PARSER_STREAM     0x6b
 
 #define IN_GET_ERROR             0xcc
 #define IN_SET_ERROR             0xe2
@@ -363,77 +346,81 @@ typedef unsigned char uchar;
 /*
  * Const things to get.
  */
-#define IN_CONST_STDIN           0x10
-#define IN_CONST_STDOUT          0x11
-#define IN_CONST_STDERR          0x12
-#define IN_CONST_ARG             0x13
+#define CONST_STDIN           0x10
+#define CONST_STDOUT          0x11
+#define CONST_STDERR          0x12
+#define CONST_ARG             0x13
+
 
 
 /*
  * IN_FN instructions.
  */
 
-/* 0x09 */
-
 #define IN_FN                    0xff
-#define IN_STR_ATOI              0x1d
-#define IN_STR_ATOO              0x38
-#define IN_STR_UORD8             0x01
-#define IN_STR_SORD8             0x02
-#define IN_STR_UORD16            0x03
-#define IN_STR_SORD16            0x04
-#define IN_STR_UORD32            0x05
-#define IN_STR_SORD32            0x06
-#define IN_STR_PREFIX            0x36
-#define IN_STR_SUFFIX            0x37
-#define IN_LOAD_ARGV             0x07
-#define IN_LOAD_ARG0             0x08
-#define IN_STOP                  0x0a
+#define FN_NONE                  0x00
+#define FN_STOP                  0x0a
 
-#define IN_LIST_PUSH_TAIL_WV     0x11
-#define IN_LIST_PUSH_TAIL_WC     0x12
-#define IN_LIST_PUSH_TAIL_BKT    0x13
-#define IN_LIST_POP_TAIL_WV      0x14
-#define IN_LIST_POP_TAIL_WC      0x15
-#define IN_LIST_POP_TAIL_BKT     0x16
-#define IN_LIST_PUSH_HEAD_WV     0x17
-#define IN_LIST_PUSH_HEAD_WC     0x18
-#define IN_LIST_PUSH_HEAD_BKT    0x19
-#define IN_LIST_POP_HEAD_WV      0x1a
-#define IN_LIST_POP_HEAD_WC      0x1b
-#define IN_LIST_POP_HEAD_BKT     0x1c
+#define FN_STR_ATOI              0x1d
+#define FN_STR_ATOO              0x38
+#define FN_STR_UORD8             0x01
+#define FN_STR_SORD8             0x02
+#define FN_STR_UORD16            0x03
+#define FN_STR_SORD16            0x04
+#define FN_STR_UORD32            0x05
+#define FN_STR_SORD32            0x06
+#define FN_STR_PREFIX            0x36
+#define FN_STR_SUFFIX            0x37
+#define FN_SPRINTF               0xd6
+#define FN_LOAD_ARGV             0x07
+#define FN_LOAD_ARG0             0x08
+#define FN_INIT_STDS             0x3e
 
-#define IN_MAP_FIND              0x24
-#define IN_MAP_INSERT_WV         0x1e
-#define IN_MAP_INSERT_WC         0x1f
-#define IN_MAP_INSERT_BKT        0x20
-#define IN_MAP_DETACH_WV         0x21
-#define IN_MAP_DETACH_WC         0x22
-#define IN_MAP_DETACH_BKT        0x23
 
-#define IN_VMAP_FIND             0x29
-#define IN_VMAP_INSERT_WC        0x25
-#define IN_VMAP_INSERT_WV        0x26
-#define IN_VMAP_INSERT_BKT       0x3d
-#define IN_VMAP_REMOVE_WC        0x27
-#define IN_VMAP_REMOVE_WV        0x28
+#define FN_LIST_PUSH_TAIL_WV     0x11
+#define FN_LIST_PUSH_TAIL_WC     0x12
+#define FN_LIST_PUSH_TAIL_BKT    0x13
+#define FN_LIST_POP_TAIL_WV      0x14
+#define FN_LIST_POP_TAIL_WC      0x15
+#define FN_LIST_POP_TAIL_BKT     0x16
+#define FN_LIST_PUSH_HEAD_WV     0x17
+#define FN_LIST_PUSH_HEAD_WC     0x18
+#define FN_LIST_PUSH_HEAD_BKT    0x19
+#define FN_LIST_POP_HEAD_WV      0x1a
+#define FN_LIST_POP_HEAD_WC      0x1b
+#define FN_LIST_POP_HEAD_BKT     0x1c
 
-#define IN_VLIST_PUSH_TAIL_WV    0x2a
-#define IN_VLIST_PUSH_TAIL_WC    0x2b
-#define IN_VLIST_PUSH_TAIL_BKT   0x2c
-#define IN_VLIST_POP_TAIL_WV     0x2d
-#define IN_VLIST_POP_TAIL_WC     0x2e
-#define IN_VLIST_POP_TAIL_BKT    0x2f
-#define IN_VLIST_PUSH_HEAD_WV    0x30
-#define IN_VLIST_PUSH_HEAD_WC    0x31
-#define IN_VLIST_PUSH_HEAD_BKT   0x32
-#define IN_VLIST_POP_HEAD_WV     0x33
-#define IN_VLIST_POP_HEAD_WC     0x34
-#define IN_VLIST_POP_HEAD_BKT    0x35
-#define IN_EXIT                  0x39
-#define IN_EXIT_HARD             0x3a
-#define IN_PREFIX                0x3b
-#define IN_SUFFIX                0x3c
+#define FN_MAP_FIND              0x24
+#define FN_MAP_INSERT_WV         0x1e
+#define FN_MAP_INSERT_WC         0x1f
+#define FN_MAP_INSERT_BKT        0x20
+#define FN_MAP_DETACH_WV         0x21
+#define FN_MAP_DETACH_WC         0x22
+#define FN_MAP_DETACH_BKT        0x23
+
+#define FN_VMAP_FIND             0x29
+#define FN_VMAP_INSERT_WC        0x25
+#define FN_VMAP_INSERT_WV        0x26
+#define FN_VMAP_INSERT_BKT       0x3d
+#define FN_VMAP_REMOVE_WC        0x27
+#define FN_VMAP_REMOVE_WV        0x28
+
+#define FN_VLIST_PUSH_TAIL_WV    0x2a
+#define FN_VLIST_PUSH_TAIL_WC    0x2b
+#define FN_VLIST_PUSH_TAIL_BKT   0x2c
+#define FN_VLIST_POP_TAIL_WV     0x2d
+#define FN_VLIST_POP_TAIL_WC     0x2e
+#define FN_VLIST_POP_TAIL_BKT    0x2f
+#define FN_VLIST_PUSH_HEAD_WV    0x30
+#define FN_VLIST_PUSH_HEAD_WC    0x31
+#define FN_VLIST_PUSH_HEAD_BKT   0x32
+#define FN_VLIST_POP_HEAD_WV     0x33
+#define FN_VLIST_POP_HEAD_WC     0x34
+#define FN_VLIST_POP_HEAD_BKT    0x35
+#define FN_EXIT                  0x39
+#define FN_EXIT_HARD             0x3a
+#define FN_PREFIX                0x3b
+#define FN_SUFFIX                0x3c
 
 /* Types of Generics. */
 enum GEN {
@@ -445,9 +432,8 @@ enum GEN {
 /* Known language element ids. */
 enum LEL_ID {
 	LEL_ID_PTR        = 1,
-	LEL_ID_VOID       = 2,
-	LEL_ID_STR        = 3,
-	LEL_ID_IGNORE     = 4
+	LEL_ID_STR        = 2,
+	LEL_ID_IGNORE     = 3
 };
 
 /*
@@ -530,6 +516,7 @@ enum LEL_ID {
 	({ SW r = *sp; (sp+1) >= prg->sb_end ? (sp = vm_bs_pop(prg, sp, 1)) : (sp += 1); (type)r; })
 
 #define vm_push_tree(i)   vm_push_type(tree_t*, i)
+#define vm_push_input(i)  vm_push_type(input_t*, i)
 #define vm_push_stream(i) vm_push_type(stream_t*, i)
 #define vm_push_struct(i) vm_push_type(struct_t*, i)
 #define vm_push_parser(i) vm_push_type(parser_t*, i)
@@ -541,6 +528,7 @@ enum LEL_ID {
 #define vm_push_ptree(i)  vm_push_type(parse_tree_t*, i)
 
 #define vm_pop_tree()   vm_pop_type(tree_t*)
+#define vm_pop_input()  vm_pop_type(input_t*)
 #define vm_pop_stream() vm_pop_type(stream_t*)
 #define vm_pop_struct() vm_pop_type(struct_t*)
 #define vm_pop_parser() vm_pop_type(parser_t*)
@@ -596,7 +584,8 @@ typedef struct colm_execution
 	long steps;
 	long pcr;
 	tree_t *ret_val;
-} Execution;
+	char WV;
+} execution_t;
 
 struct colm_execution;
 
@@ -653,10 +642,10 @@ head_t *string_sprintf( program_t *prg, str_t *format, long integer );
 head_t *make_literal( struct colm_program *prg, long litoffset );
 head_t *int_to_str( struct colm_program *prg, word_t i );
 
-void colm_execute( struct colm_program *prg, Execution *exec, code_t *code );
-void reduction_execution( Execution *exec, tree_t **sp );
-void generation_execution( Execution *exec, tree_t **sp );
-void reverse_execution( Execution *exec, tree_t **sp, struct rt_code_vect *all_rev );
+void colm_execute( struct colm_program *prg, execution_t *exec, code_t *code );
+void reduction_execution( execution_t *exec, tree_t **sp );
+void generation_execution( execution_t *exec, tree_t **sp );
+void reverse_execution( execution_t *exec, tree_t **sp, struct rt_code_vect *all_rev );
 
 kid_t *alloc_attrs( struct colm_program *prg, long length );
 void free_attrs( struct colm_program *prg, kid_t *attrs );
@@ -672,7 +661,7 @@ void split_ref( struct colm_program *prg, tree_t ***sp, ref_t *from_ref );
 
 void alloc_global( struct colm_program *prg );
 tree_t **colm_execute_code( struct colm_program *prg,
-	Execution *exec, tree_t **sp, code_t *instr );
+	execution_t *exec, tree_t **sp, code_t *instr );
 code_t *colm_pop_reverse_code( struct rt_code_vect *all_rev );
 
 #ifdef __cplusplus

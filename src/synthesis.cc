@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -22,9 +22,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
-
 #include <iostream>
-
 #include "compiler.h"
 
 using std::cout;
@@ -444,7 +442,7 @@ UniqueType *LangVarRef::loadField( Compiler *pd, CodeVect &code,
 	if ( el->isConstVal ) {
 		code.appendHalf( el->constValId );
 
-		if ( el->constValId == IN_CONST_ARG ) {
+		if ( el->constValId == CONST_ARG ) {
 			/* Make sure we have this string. */
 			StringMapEl *mapEl = 0;
 			if ( pd->literalStrings.insert( el->constValArg, &mapEl ) )
@@ -676,6 +674,11 @@ void LangVarRef::loadObj( Compiler *pd, CodeVect &code,
 		loadInbuiltObject( pd, code, lastPtrInQual, forWriting );
 	else if ( isLocalRef() )
 		loadLocalObj( pd, code, lastPtrInQual, forWriting );
+	else if ( isProdRef( pd ) ) {
+		LangVarRef *dup = new LangVarRef( *this );
+		dup->qual->prepend( QualItem( QualItem::Dot, InputLoc(), scope->caseClauseVarRef->name ) );
+		dup->loadObj( pd, code, lastPtrInQual, forWriting );
+	}
 	else if ( isStructRef() )
 		loadContextObj( pd, code, lastPtrInQual, forWriting );
 	else
@@ -1025,6 +1028,11 @@ void LangVarRef::resetActiveRefs( Compiler *pd, VarRefLookup &lookup,
 	}
 }
 
+bool LangVarRef::isFinishCall( VarRefLookup &lookup ) const
+{
+	return lookup.objMethod->type == ObjectMethod::ParseFinish;
+}
+
 void LangVarRef::callOperation( Compiler *pd, CodeVect &code, VarRefLookup &lookup ) const
 {
 	/* This is for writing if it is a non-const builtin. */
@@ -1041,42 +1049,27 @@ void LangVarRef::callOperation( Compiler *pd, CodeVect &code, VarRefLookup &look
 	bool revert = lookup.lastPtrInQual >= 0 || !isLocalRef() || isInbuiltObject();
 	bool unwind = false;
 	
-	/* The call instruction. */
-	if ( pd->revertOn && revert )  {
-		if ( lookup.objMethod->opcodeWV == IN_PARSE_FINISH_WV ) {
-			code.append( IN_PARSE_LOAD );
-			code.append( IN_PARSE_FINISH_WV );
-			code.appendHalf( 0 );
-			code.append( IN_PCR_CALL );
-			code.append( IN_PARSE_FINISH_EXIT_WV );
+	if ( isFinishCall( lookup ) ) {
+		code.append( IN_SEND_EOF_W );
 
-			code.append( IN_GET_PARSER_MEM_R );
-			code.appendHalf( 0 );
-		}
-		else {
+		LangTerm::parseFrag( pd, code, 0 );
+
+		code.append( IN_GET_PARSER_MEM_R );
+		code.appendHalf( 0 );
+	}
+	else {
+		if ( pd->revertOn && revert )  {
 			if ( lookup.objMethod->opcodeWV == IN_CALL_WV ||
-					lookup.objMethod->opcodeWC == IN_EXIT )
+					lookup.objMethod->opcodeWC == FN_EXIT )
 				unwind = true;
 
 			if ( lookup.objMethod->useFnInstr )
 				code.append( IN_FN );
 			code.append( lookup.objMethod->opcodeWV );
 		}
-	}
-	else {
-		if ( lookup.objMethod->opcodeWC == IN_PARSE_FINISH_WC ) {
-			code.append( IN_PARSE_LOAD );
-			code.append( IN_PARSE_FINISH_WC );
-			code.appendHalf( 0 );
-			code.append( IN_PCR_CALL );
-			code.append( IN_PARSE_FINISH_EXIT_WC );
-
-			code.append( IN_GET_PARSER_MEM_R );
-			code.appendHalf( 0 );
-		}
 		else {
 			if ( lookup.objMethod->opcodeWC == IN_CALL_WC ||
-					lookup.objMethod->opcodeWC == IN_EXIT )
+					lookup.objMethod->opcodeWC == FN_EXIT )
 				unwind = true;
 
 			if ( lookup.objMethod->useFnInstr )
@@ -1224,6 +1217,51 @@ UniqueType *LangTerm::evaluateMatch( Compiler *pd, CodeVect &code ) const
 	return ut;
 }
 
+UniqueType *LangTerm::evaluateProdCompare( Compiler *pd, CodeVect &code ) const
+{
+	UniqueType *ut = varRef->evaluate( pd, code );
+	if ( ut->typeId != TYPE_TREE && ut->typeId != TYPE_REF ) {
+		error(varRef->loc) << "expected match against a tree/ref type" << endp;
+	}
+	code.append( IN_PROD_NUM );
+
+	/* look up the production name. */
+	Production *prod = pd->findProductionByLabel( ut->langEl, this->prod );
+
+	if ( prod == 0 ) {
+		error( this->loc) << "could not find "
+				"production label: " << this->prod << endp;
+	}
+
+	unsigned int n = prod->prodNum;
+	code.append( IN_LOAD_INT );
+	code.appendWord( n );
+
+	code.append( IN_TST_EQL_VAL );
+
+	if ( expr != 0 ) {
+		code.append( IN_DUP_VAL );
+
+		/* Test: jump past the match if the production test failed. We don't have
+		 * the distance yet. */
+		long jumpFalse = code.length();
+		code.append( IN_JMP_FALSE_VAL );
+		code.appendHalf( 0 );
+
+		code.append( IN_POP_VAL );
+
+		expr->evaluate( pd, code );
+
+		/* Set the jump false distance. */
+		long falseDist = code.length() - jumpFalse - 3;
+		code.setHalf( jumpFalse+1, falseDist );
+
+		return ut;
+	}
+
+	return pd->uniqueTypeInt;
+}
+
 void LangTerm::evaluateCapture( Compiler *pd, CodeVect &code, UniqueType *valUt ) const
 {
 	if ( varRef != 0 ) {
@@ -1252,13 +1290,14 @@ UniqueType *LangTerm::evaluateNew( Compiler *pd, CodeVect &code ) const
 			newUT->generic->elUt->langEl->contextIn != 0 )
 	{
 		if ( fieldInitArgs == 0 || fieldInitArgs->length() != 1 )
-			error(loc) << "parse command requires just input" << endp;
+			error(loc) << "parse command requires just context " << endp;
 		context = true;
 	}
 
 	if ( newUT->typeId == TYPE_GENERIC ) {
 		code.append( IN_CONS_GENERIC );
 		code.appendHalf( newUT->generic->id );
+		code.appendHalf( 0 ); // stopId
 
 		if ( newUT->generic->typeId == GEN_PARSER ) {
 
@@ -1276,14 +1315,20 @@ UniqueType *LangTerm::evaluateNew( Compiler *pd, CodeVect &code ) const
 	 * First load the context into the parser.
 	 */
 	if ( context ) {
-		/* Eval the context. */
-		UniqueType *argUT = fieldInitArgs->data[0]->expr->evaluate( pd, code );
+		for ( int i = 0; i < fieldInitArgs->length(); i++ ) {
+			/* Eval what we are initializing with. */
+			UniqueType *argUT = fieldInitArgs->data[i]->expr->evaluate( pd, code );
 
-		if ( argUT != pd->uniqueTypeStream && argUT->typeId != TYPE_STRUCT )
-			error(loc) << "context argument must be a stream or a tree" << endp;
-
-		/* Store the context. Leaves the parser on the stack. */
-		code.append( IN_SET_PARSER_CONTEXT );
+			if ( argUT == pd->uniqueTypeInput ) {
+				code.append( IN_SET_PARSER_INPUT );
+			}
+			else if ( argUT->typeId == TYPE_STRUCT ) {
+				code.append( IN_SET_PARSER_CONTEXT );
+			}
+			else {
+				error(loc) << "cannot initialize parser with this type, context or input only" << endp;
+			}
+		}
 	}
 
 	evaluateCapture( pd, code, newUT );
@@ -1383,25 +1428,9 @@ UniqueType *LangTerm::evaluateConstruct( Compiler *pd, CodeVect &code ) const
 	return replUT;
 }
 
-
-void LangTerm::parseFrag( Compiler *pd, CodeVect &code, int stopId ) const
+void LangTerm::parseFrag( Compiler *pd, CodeVect &code, int stopId )
 {
-	/* Parse instruction, dependent on whether or not we are producing
-	 * revert or commit code. */
-	if ( pd->revertOn ) {
-		code.append( IN_PARSE_LOAD );
-		code.append( IN_PARSE_FRAG_WV );
-		code.appendHalf( stopId );
-		code.append( IN_PCR_CALL );
-		code.append( IN_PARSE_FRAG_EXIT_WV );
-	}
-	else {
-		code.append( IN_PARSE_LOAD );
-		code.append( IN_PARSE_FRAG_WC );
-		code.appendHalf( stopId );
-		code.append( IN_PCR_CALL );
-		code.append( IN_PARSE_FRAG_EXIT_WC );
-	}
+	code.append( IN_PARSE_FRAG_W );
 }
 
 UniqueType *LangTerm::evaluateReadReduce( Compiler *pd, CodeVect &code ) const
@@ -1450,9 +1479,9 @@ UniqueType *LangTerm::evaluateParse( Compiler *pd, CodeVect &code,
 	int stopId = stop ? targetUT->langEl->id : 0;
 
 	bool context = false;
-	if ( targetUT->langEl->contextIn != 0 ) {
-		if ( fieldInitArgs == 0 || fieldInitArgs->length() != 1 )
-			error(loc) << "parse command requires just input" << endp;
+	if ( fieldInitArgs != 0 ) {
+		if ( fieldInitArgs == 0 || ( fieldInitArgs->length() != 1 && fieldInitArgs->length() != 2 ) )
+			error(loc) << "parse command requires just context and input" << endp;
 		context = true;
 	}
 
@@ -1478,27 +1507,140 @@ UniqueType *LangTerm::evaluateParse( Compiler *pd, CodeVect &code,
 	else {
 		code.append( IN_CONS_GENERIC );
 		code.appendHalf( parserUT->generic->id );
+		code.appendHalf( stopId );
 	}
 
 	/*
 	 * First load the context into the parser.
 	 */
 	if ( context ) {
-		/* Eval the context. */
-		UniqueType *argUT = fieldInitArgs->data[0]->expr->evaluate( pd, code );
+		for ( int i = 0; i < fieldInitArgs->length(); i++ ) {
+			/* Eval what we are initializing with. */
+			UniqueType *argUT = fieldInitArgs->data[i]->expr->evaluate( pd, code );
 
-		if ( argUT != pd->uniqueTypeStream && argUT->typeId != TYPE_STRUCT )
-			error(loc) << "context argument must be a stream or a tree" << endp;
-
-		/* Store the context. */
-		code.append( IN_SET_PARSER_CONTEXT );
+			if ( argUT == pd->uniqueTypeInput ) {
+				code.append( IN_SET_PARSER_INPUT );
+			}
+			else if ( argUT->typeId == TYPE_STRUCT && targetUT->langEl->contextIn != 0 ) {
+				code.append( IN_SET_PARSER_CONTEXT );
+			}
+			else {
+				error(loc) << "cannot initialize parser with this type, context or input only" << endp;
+			}
+		}
 	}
 
 	/*****************************/
-	
+
+	if ( parserText->list->length() == 0 ) {
+		code.append( IN_SEND_NOTHING );
+
+		/* Parse instruction, dependent on whether or not we are producing
+		 * revert or commit code. */
+		parseFrag( pd, code, stopId );
+	}
+	else {
+		for ( ConsItemList::Iter item = *parserText->list; item.lte(); item++ ) {
+			bool isStream = false;
+			switch ( item->type ) {
+			case ConsItem::LiteralType: {
+				String result;
+				bool unusedCI;
+				prepareLitString( result, unusedCI, 
+						item->prodEl->typeRef->pdaLiteral->data,
+						item->prodEl->typeRef->pdaLiteral->loc );
+
+				/* Make sure we have this string. */
+				StringMapEl *mapEl = 0;
+				if ( pd->literalStrings.insert( result, &mapEl ) )
+					mapEl->value = pd->literalStrings.length()-1;
+
+				code.append( IN_LOAD_STR );
+				code.appendWord( mapEl->value );
+				break;
+			}
+			case ConsItem::InputText: {
+				/* Make sure we have this string. */
+				StringMapEl *mapEl = 0;
+				if ( pd->literalStrings.insert( item->data, &mapEl ) )
+					mapEl->value = pd->literalStrings.length()-1;
+
+				code.append( IN_LOAD_STR );
+				code.appendWord( mapEl->value );
+				break;
+			}
+			case ConsItem::ExprType: {
+				UniqueType *ut = item->expr->evaluate( pd, code );
+
+				if ( ut->typeId == TYPE_VOID ) {
+					/* Clear it away if return type is void. */
+					code.append( IN_POP_VAL );
+					continue;
+				}
+
+				if ( ut->typeId == TYPE_INT || ut->typeId == TYPE_BOOL )
+					code.append( IN_INT_TO_STR );
+
+				if ( ut == pd->uniqueTypeStream )
+					isStream = true;
+
+				break;
+			}}
+
+			if ( isStream )
+				code.append( IN_SEND_STREAM_W );
+			else if ( tree )
+				code.append( IN_SEND_TREE_W );
+			else
+				code.append( IN_SEND_TEXT_W );
+
+			/* Parse instruction, dependent on whether or not we are producing
+			 * revert or commit code. */
+			parseFrag( pd, code, stopId );
+		}
+	}
+
+	/*
+	 * Finish operation
+	 */
+
+	if ( !stop ) {
+		code.append( IN_SEND_EOF_W );
+		parseFrag( pd, code, stopId );
+	}
+
+	if ( parserText->reduce ) {
+		code.append( IN_REDUCE_COMMIT );
+	}
+
+	/* Pull out the error and save it off. */
+	code.append( IN_DUP_VAL );
+	code.append( IN_GET_PARSER_MEM_R );
+	code.appendHalf( 1 );
+	code.append( IN_SET_ERROR );
+
+	/* Replace the parser with the parsed tree. */
+	code.append( IN_GET_PARSER_MEM_R );
+	code.appendHalf( 0 );
+
+	/* Capture to the local var. */
+	evaluateCapture( pd, code, targetUT );
+
+	return targetUT;
+}
+
+void LangTerm::evaluateSendStream( Compiler *pd, CodeVect &code ) const
+{
+	UniqueType *varUt = varRef->evaluate( pd, code );
+
+	if ( varUt->listOf( pd->uniqueTypeStream ) ) {
+		code.append( IN_GET_VLIST_MEM_R );
+		code.appendHalf( varUt->generic->id );
+		code.appendHalf( 0 );
+	}
+
 	/* Assign bind ids to the variables in the replacement. */
 	for ( ConsItemList::Iter item = *parserText->list; item.lte(); item++ ) {
-		bool isStream = false;
 		switch ( item->type ) {
 		case ConsItem::LiteralType: {
 			String result;
@@ -1528,242 +1670,104 @@ UniqueType *LangTerm::evaluateParse( Compiler *pd, CodeVect &code,
 		}
 		case ConsItem::ExprType: {
 			UniqueType *ut = item->expr->evaluate( pd, code );
-
-			if ( ut->typeId == TYPE_TREE && ut->langEl == pd->voidLangEl ) {
+			if ( ut->typeId == TYPE_VOID ) {
 				/* Clear it away if return type is void. */
-				code.append( IN_POP_TREE );
+				code.append( IN_POP_VAL );
 				continue;
 			}
 
 			if ( ut->typeId == TYPE_INT || ut->typeId == TYPE_BOOL )
 				code.append( IN_INT_TO_STR );
 
-			if ( ut == pd->uniqueTypeStream )
-				isStream = true;
-
-			if ( !tree && ut->typeId == TYPE_TREE &&
-					ut->langEl != pd->strLangEl && ut != pd->uniqueTypeStream )
-			{
-				/* Convert it to a string. */
-				code.append( IN_TREE_TO_STR_TRIM );
-			}
 			break;
 		}}
 
-		if ( isStream ) {
-			if ( pd->revertOn )
-				code.append( IN_PARSE_APPEND_STREAM_WV );
-			else
-				code.append( IN_PARSE_APPEND_STREAM_WC );
-		}
-		else {
-			if ( pd->revertOn )
-				code.append( IN_PARSE_APPEND_WV );
-			else
-				code.append( IN_PARSE_APPEND_WC );
-		}
-
-		/* Parse instruction, dependent on whether or not we are producing
-		 * revert or commit code. */
-		parseFrag( pd, code, stopId );
+		code.append( IN_PRINT_TREE );
 	}
-
-	/*
-	 * Finish operation
-	 */
-
-	/* Parse instruction, dependent on whether or not we are producing revert
-	 * or commit code. */
-	if ( pd->revertOn ) {
-		/* Finish immediately. */
-		code.append( IN_PARSE_LOAD );
-		code.append( IN_PARSE_FINISH_WV );
-		code.appendHalf( stopId );
-		code.append( IN_PCR_CALL );
-		code.append( IN_PARSE_FINISH_EXIT_WV );
-	}
-	else {
-		/* Finish immediately. */
-		code.append( IN_PARSE_LOAD );
-		code.append( IN_PARSE_FINISH_WC );
-		code.appendHalf( stopId );
-		code.append( IN_PCR_CALL );
-		code.append( IN_PARSE_FINISH_EXIT_WC );
-	}
-
-	/* Parser is on the top of the stack. */
-
-	/* Pull out the error and save it off. */
-	code.append( IN_DUP_VAL );
-	code.append( IN_GET_PARSER_MEM_R );
-	code.appendHalf( 1 );
-	code.append( IN_SET_ERROR );
-
-	/* Replace the parser with the parsed tree. */
-	code.append( IN_GET_PARSER_MEM_R );
-	code.appendHalf( 0 );
-
-	/* Capture to the local var. */
-	evaluateCapture( pd, code, targetUT );
-
-	return targetUT;
-}
-
-void ConsItemList::evaluateSendStream( Compiler *pd, CodeVect &code )
-{
-	for ( ConsItemList::Iter item = first(); item.lte(); item++ ) {
-		/* Load a dup of the stream. */
-		code.append( IN_DUP_VAL );
-
-		switch ( item->type ) {
-		case ConsItem::LiteralType: {
-			String result;
-			bool unusedCI;
-			prepareLitString( result, unusedCI, 
-					item->prodEl->typeRef->pdaLiteral->data,
-					item->prodEl->typeRef->pdaLiteral->loc );
-
-			/* Make sure we have this string. */
-			StringMapEl *mapEl = 0;
-			if ( pd->literalStrings.insert( result, &mapEl ) )
-				mapEl->value = pd->literalStrings.length()-1;
-
-			code.append( IN_LOAD_STR );
-			code.appendWord( mapEl->value );
-			break;
-		}
-		case ConsItem::InputText: {
-			/* Make sure we have this string. */
-			StringMapEl *mapEl = 0;
-			if ( pd->literalStrings.insert( item->data, &mapEl ) )
-				mapEl->value = pd->literalStrings.length()-1;
-
-			code.append( IN_LOAD_STR );
-			code.appendWord( mapEl->value );
-			break;
-		}
-		case ConsItem::ExprType:
-			UniqueType *ut = item->expr->evaluate( pd, code );
-			if ( ut->typeId == TYPE_TREE && ut->langEl == pd->voidLangEl ) {
-				/* Clear it away if the the return type is void. */
-				code.append( IN_POP_TREE );
-				code.append( IN_POP_TREE );
-				continue;
-			}
-			else if ( ut->typeId == TYPE_TREE && !isStr( ut ) ) {
-				if ( item->trim )
-					code.append( IN_TREE_TRIM );
-			}
-
-			if ( ut->typeId == TYPE_INT || ut->typeId == TYPE_BOOL )
-				code.append( IN_INT_TO_STR );
-			break;
-		}
-
-		code.append( IN_PRINT_STREAM );
-		code.append( 1 );
-	}
-}
-
-void LangTerm::evaluateSendStream( Compiler *pd, CodeVect &code ) const
-{
-	varRef->evaluate( pd, code );
-	parserText->list->evaluateSendStream( pd, code );
-
-	/* Normally we would have to pop the stream var ref that we evaluated
-	 * before all the print arguments (which includes the stream, evaluated
-	 * last), however we send is part of an expression, and is supposed to
-	 * leave the varref on the stack. */
 }
 
 void LangTerm::evaluateSendParser( Compiler *pd, CodeVect &code, bool strings ) const
 {
-	varRef->evaluate( pd, code );
+	UniqueType *varUt = varRef->evaluate( pd, code );
 
-	/* Assign bind ids to the variables in the replacement. */
-	for ( ConsItemList::Iter item = *parserText->list; item.lte(); item++ ) {
-		bool isStream = false;
-		switch ( item->type ) {
-		case ConsItem::LiteralType: {
-			String result;
-			bool unusedCI;
-			prepareLitString( result, unusedCI, 
-					item->prodEl->typeRef->pdaLiteral->data,
-					item->prodEl->typeRef->pdaLiteral->loc );
-
-			/* Make sure we have this string. */
-			StringMapEl *mapEl = 0;
-			if ( pd->literalStrings.insert( result, &mapEl ) )
-				mapEl->value = pd->literalStrings.length()-1;
-
-			code.append( IN_LOAD_STR );
-			code.appendWord( mapEl->value );
-			break;
-		}
-		case ConsItem::InputText: {
-			/* Make sure we have this string. */
-			StringMapEl *mapEl = 0;
-			if ( pd->literalStrings.insert( item->data, &mapEl ) )
-				mapEl->value = pd->literalStrings.length()-1;
-
-			code.append( IN_LOAD_STR );
-			code.appendWord( mapEl->value );
-			break;
-		}
-		case ConsItem::ExprType:
-			UniqueType *ut = item->expr->evaluate( pd, code );
-			if ( ut->typeId == TYPE_TREE && ut->langEl == pd->voidLangEl ) {
-				/* Clear it away if return type is void. */
-				code.append( IN_POP_TREE );
-				continue;
-			}
-
-			if ( ut == pd->uniqueTypeStream )
-				isStream = true;
-
-			if ( ut->typeId == TYPE_INT || ut->typeId == TYPE_BOOL )
-				code.append( IN_INT_TO_STR );
-
-			if ( strings && ut->typeId == TYPE_TREE &&
-					ut->langEl != pd->strLangEl && ut != pd->uniqueTypeStream )
-			{
-				/* Convert it to a string. */
-				code.append( IN_TREE_TO_STR );
-			}
-			break;
-		}
-
-		if ( isStream ) {
-			if ( pd->revertOn )
-				code.append( IN_PARSE_APPEND_STREAM_WV );
-			else
-				code.append( IN_PARSE_APPEND_STREAM_WC );
-		}
-		else {
-			if ( pd->revertOn )
-				code.append( IN_PARSE_APPEND_WV );
-			else
-				code.append( IN_PARSE_APPEND_WC );
-		}
-
-		parseFrag( pd, code, 0 );
+	if ( varUt->parser() ) {
+	}
+	else if ( varUt->listOf( pd->uniqueTypeStream ) ) {
+		code.append( IN_GET_VLIST_MEM_R );
+		code.appendHalf( varUt->generic->id );
+		code.appendHalf( 0 );
 	}
 
-	if ( eof ) { 
-		if ( pd->revertOn ) {
-			code.append( IN_PARSE_LOAD );
-			code.append( IN_PARSE_FINISH_WV );
-			code.appendHalf( 0 );
-			code.append( IN_PCR_CALL );
-			code.append( IN_PARSE_FINISH_EXIT_WV );
+	if ( parserText->list->length() == 0 ) {
+		code.append( IN_SEND_NOTHING );
+
+		/* Parse instruction, dependent on whether or not we are producing
+		 * revert or commit code. */
+		parseFrag( pd, code, 0 );
+	}
+	else {
+
+		/* Assign bind ids to the variables in the replacement. */
+		for ( ConsItemList::Iter item = *parserText->list; item.lte(); item++ ) {
+			bool isStream = false;
+			switch ( item->type ) {
+			case ConsItem::LiteralType: {
+				String result;
+				bool unusedCI;
+				prepareLitString( result, unusedCI, 
+						item->prodEl->typeRef->pdaLiteral->data,
+						item->prodEl->typeRef->pdaLiteral->loc );
+
+				/* Make sure we have this string. */
+				StringMapEl *mapEl = 0;
+				if ( pd->literalStrings.insert( result, &mapEl ) )
+					mapEl->value = pd->literalStrings.length()-1;
+
+				code.append( IN_LOAD_STR );
+				code.appendWord( mapEl->value );
+				break;
+			}
+			case ConsItem::InputText: {
+				/* Make sure we have this string. */
+				StringMapEl *mapEl = 0;
+				if ( pd->literalStrings.insert( item->data, &mapEl ) )
+					mapEl->value = pd->literalStrings.length()-1;
+
+				code.append( IN_LOAD_STR );
+				code.appendWord( mapEl->value );
+				break;
+			}
+			case ConsItem::ExprType:
+				UniqueType *ut = item->expr->evaluate( pd, code );
+				if ( ut->typeId == TYPE_VOID ) {
+					/* Clear it away if return type is void. */
+					code.append( IN_POP_VAL );
+					continue;
+				}
+
+				if ( ut == pd->uniqueTypeStream )
+					isStream = true;
+
+				if ( ut->typeId == TYPE_INT || ut->typeId == TYPE_BOOL )
+					code.append( IN_INT_TO_STR );
+
+				break;
+			}
+
+			if ( isStream )
+				code.append( IN_SEND_STREAM_W );
+			else if ( !strings )
+				code.append( IN_SEND_TREE_W );
+			else
+				code.append( IN_SEND_TEXT_W );
+
+			parseFrag( pd, code, 0 );
 		}
-		else {
-			code.append( IN_PARSE_LOAD );
-			code.append( IN_PARSE_FINISH_WC );
-			code.appendHalf( 0 );
-			code.append( IN_PCR_CALL );
-			code.append( IN_PARSE_FINISH_EXIT_WC );
-		}
+	}
+
+	if ( eof ) {
+		code.append( IN_SEND_EOF_W );
+		parseFrag( pd, code, 0 );
 	}
 }
 
@@ -1772,6 +1776,8 @@ UniqueType *LangTerm::evaluateSend( Compiler *pd, CodeVect &code ) const
 	UniqueType *varUt = varRef->lookup( pd );
 
 	if ( varUt == pd->uniqueTypeStream )
+		evaluateSendStream( pd, code );
+	else if ( varUt->listOf( pd->uniqueTypeStream ) )
 		evaluateSendStream( pd, code );
 	else if ( varUt->parser() )
 		evaluateSendParser( pd, code, true );
@@ -1835,7 +1841,7 @@ UniqueType *LangTerm::evaluateEmbedString( Compiler *pd, CodeVect &code ) const
 					ut->langEl != pd->strLangEl && ut != pd->uniqueTypeStream )
 			{
 				/* Convert it to a string. */
-				code.append( IN_TREE_TO_STR_TRIM );
+				code.append( IN_TREE_TO_STR );
 			}
 			break;
 		}}
@@ -1931,6 +1937,9 @@ UniqueType *LangTerm::evaluate( Compiler *pd, CodeVect &code ) const
 		}
 		case MatchType:
 			retUt = evaluateMatch( pd, code );
+			break;
+		case ProdCompareType:
+			retUt = evaluateProdCompare( pd, code );
 			break;
 		case ParseType:
 			retUt = evaluateParse( pd, code, false, false );
@@ -2543,62 +2552,6 @@ void LangStmt::compile( Compiler *pd, CodeVect &code ) const
 	pd->unwindCode.insert( 0, block );
 
 	switch ( type ) {
-		case PrintType: 
-		case PrintXMLACType:
-		case PrintXMLType:
-		case PrintDumpType:
-		case PrintStreamType: {
-			UniqueType **types = new UniqueType*[exprPtrVect->length()];
-			
-			/* Push the args backwards. */
-			for ( CallArgVect::Iter pex = exprPtrVect->first(); pex.lte(); pex++ ) {
-				types[pex.pos()] = (*pex)->expr->evaluate( pd, code );
-				if ( types[pex.pos()]->typeId == TYPE_INT || 
-					types[pex.pos()]->typeId == TYPE_BOOL )
-				{
-					code.append( IN_INT_TO_STR );
-				}
-				else if ( isTree( types[pex.pos()] ) && !isStr( types[pex.pos()] ) ) {
-					code.append( IN_TREE_TRIM );
-				}
-			}
-
-			/* Run the printing forwards. */
-			if ( type == PrintType ) {
-				code.append( IN_PRINT );
-				code.append( exprPtrVect->length() );
-			}
-			else if ( type == PrintXMLACType ) {
-				code.append( IN_PRINT_XML_AC );
-				code.append( exprPtrVect->length() );
-			}
-			else if ( type == PrintXMLType ) {
-				code.append( IN_PRINT_XML );
-				code.append( exprPtrVect->length() );
-			}
-			else if ( type == PrintStreamType ) {
-				/* Minus one because the first arg is the stream. */
-				code.append( IN_PRINT_STREAM );
-				code.append( exprPtrVect->length() - 1 );
-			}
-			else if ( type == PrintDumpType ) {
-				/* Minus one because the first arg is the stream. */
-				code.append( IN_PRINT_DUMP );
-				code.append( exprPtrVect->length() - 1 );
-			}
-
-			delete[] types;
-
-			break;
-		}
-		case PrintAccum: {
-			code.append( IN_LOAD_GLOBAL_R );
-			code.append(     IN_GET_CONST );
-			code.appendHalf( IN_CONST_STDOUT );
-			consItemList->evaluateSendStream( pd, code );
-			code.append( IN_POP_TREE );
-			break;
-		}
 		case ExprType: {
 			/* Evaluate the exrepssion, then pop it immediately. */
 			UniqueType *exprUt = expr->evaluate( pd, code );
@@ -2945,6 +2898,12 @@ int Compiler::argvOffset()
 	return argv->offset;
 }
 
+int Compiler::stdsOffset()
+{
+	globalObjectDef->referenceField( this, stds );
+	return stds->offset;
+}
+
 void Compiler::compileRootBlock( )
 {
 	CodeBlock *block = rootCodeBlock;
@@ -2963,17 +2922,21 @@ void Compiler::compileRootBlock( )
 	CodeVect &code = block->codeWC;
 
 	code.append( IN_FN );
-	code.append( IN_LOAD_ARG0 );
+	code.append( FN_LOAD_ARG0 );
 	code.appendHalf( arg0Offset() );
 
 	code.append( IN_FN );
-	code.append( IN_LOAD_ARGV );
+	code.append( FN_LOAD_ARGV );
 	code.appendHalf( argvOffset() );
+
+	code.append( IN_FN );
+	code.append( FN_INIT_STDS );
+	code.appendHalf( stdsOffset() );
 
 	block->compile( this, code );
 
 	code.append( IN_FN );
-	code.append( IN_STOP );
+	code.append( FN_STOP );
 
 	/* Make the local trees descriptor. */
 	findLocals( rootLocalFrame, block );

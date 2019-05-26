@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -132,15 +132,15 @@ void Compiler::generateExports()
 
 		bool prodNames = false;
 		for ( LelDefList::Iter prod = lel->defList; prod.lte(); prod++ ) {
-			if ( prod->name.length() > 0 )
+			if ( prod->_name.length() > 0 )
 				prodNames = true;
 		}
 
 		if ( prodNames ) {
 			out << "	enum prod_name {\n";
 			for ( LelDefList::Iter prod = lel->defList; prod.lte(); prod++ ) {
-				if ( prod->name.length() > 0 )
-					out << "\t\t" << prod->name << " = " << prod->prodNum << ",\n";
+				if ( prod->_name.length() > 0 )
+					out << "\t\t" << prod->_name << " = " << prod->prodNum << ",\n";
 			}
 			out << "	};\n";
 			out << "	enum prod_name prodName() " <<

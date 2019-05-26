@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -42,10 +42,6 @@ extern "C" {
 #define INPUT_IGNORE   7
 
 struct LangEl;
-struct Pattern;
-struct PatternItem;
-struct Constructor;
-struct ConsItem;
 struct colm_tree;
 struct colm_stream;
 struct colm_location;
@@ -54,20 +50,110 @@ struct colm_struct;
 struct colm_str;
 struct colm_stream;
 
+struct input_impl;
 struct stream_impl;
 
-enum run_buf_type {
-	RunBufDataType = 0,
-	RunBufTokenType,
-	RunBufIgnoreType,
-	RunBufSourceType
+#define DEF_INPUT_FUNCS( input_funcs, _input_impl ) \
+struct input_funcs \
+{ \
+	int (*get_parse_block)( struct colm_program *prg, struct _input_impl *si, int *pskip, char **pdp, int *copied ); \
+	int (*get_data)( struct colm_program *prg, struct _input_impl *si, char *dest, int length ); \
+	int (*consume_data)( struct colm_program *prg, struct _input_impl *si, int length, struct colm_location *loc ); \
+	int (*undo_consume_data)( struct colm_program *prg, struct _input_impl *si, const char *data, int length ); \
+	struct colm_tree *(*consume_tree)( struct colm_program *prg, struct _input_impl *si ); \
+	void (*undo_consume_tree)( struct colm_program *prg, struct _input_impl *si, struct colm_tree *tree, int ignore ); \
+	struct LangEl *(*consume_lang_el)( struct colm_program *prg, struct _input_impl *si, long *bind_id, char **data, long *length ); \
+	void (*undo_consume_lang_el)( struct colm_program *prg, struct _input_impl *si ); \
+	void (*prepend_data)( struct colm_program *prg, struct _input_impl *si, const char *data, long len ); \
+	int (*undo_prepend_data)( struct colm_program *prg, struct _input_impl *si, int length ); \
+	void (*prepend_tree)( struct colm_program *prg, struct _input_impl *si, struct colm_tree *tree, int ignore ); \
+	struct colm_tree *(*undo_prepend_tree)( struct colm_program *prg, struct _input_impl *si ); \
+	void (*prepend_stream)( struct colm_program *prg, struct _input_impl *si, struct colm_stream *stream ); \
+	struct colm_tree *(*undo_prepend_stream)( struct colm_program *prg, struct _input_impl *si ); \
+	void (*append_data)( struct colm_program *prg, struct _input_impl *si, const char *data, long length ); \
+	struct colm_tree *(*undo_append_data)( struct colm_program *prg, struct _input_impl *si, int length ); \
+	void (*append_tree)( struct colm_program *prg, struct _input_impl *si, struct colm_tree *tree ); \
+	struct colm_tree *(*undo_append_tree)( struct colm_program *prg, struct _input_impl *si ); \
+	void (*append_stream)( struct colm_program *prg, struct _input_impl *si, struct colm_stream *stream ); \
+	struct colm_tree *(*undo_append_stream)( struct colm_program *prg, struct _input_impl *si ); \
+	void (*set_eof_mark)( struct colm_program *prg, struct _input_impl *si, char eof_mark ); \
+	void (*transfer_loc)( struct colm_program *prg, struct colm_location *loc, struct _input_impl *si ); \
+	void (*destructor)( struct colm_program *prg, struct colm_tree **sp, struct _input_impl *si ); \
+}
+
+#define DEF_STREAM_FUNCS( stream_funcs, _stream_impl ) \
+struct stream_funcs \
+{ \
+	int (*get_parse_block)( struct colm_program *prg, struct _stream_impl *si, int *pskip, char **pdp, int *copied ); \
+	int (*get_data)( struct colm_program *prg, struct _stream_impl *si, char *dest, int length ); \
+	int (*get_data_source)( struct colm_program *prg, struct _stream_impl *si, char *dest, int length ); \
+	int (*consume_data)( struct colm_program *prg, struct _stream_impl *si, int length, struct colm_location *loc ); \
+	int (*undo_consume_data)( struct colm_program *prg, struct _stream_impl *si, const char *data, int length ); \
+	void (*transfer_loc)( struct colm_program *prg, struct colm_location *loc, struct _stream_impl *si ); \
+	struct colm_str_collect *(*get_collect)( struct colm_program *prg, struct _stream_impl *si ); \
+	void (*flush_stream)( struct colm_program *prg, struct _stream_impl *si ); \
+	void (*close_stream)( struct colm_program *prg, struct _stream_impl *si ); \
+	void (*print_tree)( struct colm_program *prg, struct colm_tree **sp, \
+			struct _stream_impl *impl, struct colm_tree *tree, int trim ); \
+	struct stream_impl *(*split_consumed)( struct colm_program *prg, struct _stream_impl *si ); \
+	int (*append_data)( struct colm_program *prg, struct _stream_impl *si, const char *data, int len ); \
+	int (*undo_append_data)( struct colm_program *prg, struct _stream_impl *si, int length ); \
+	void (*destructor)( struct colm_program *prg, struct colm_tree **sp, struct _stream_impl *si ); \
+}
+
+DEF_INPUT_FUNCS( input_funcs, input_impl );
+DEF_STREAM_FUNCS( stream_funcs, stream_impl );
+
+/* List of source streams. Enables streams to be pushed/popped. */
+struct input_impl
+{
+	struct input_funcs *funcs;
+};
+
+/* List of source streams. Enables streams to be pushed/popped. */
+struct stream_impl
+{
+	struct stream_funcs *funcs;
+};
+
+enum seq_buf_type {
+	SB_TOKEN = 1,
+	SB_IGNORE,
+	SB_SOURCE,
+	SB_ACCUM
+};
+
+struct seq_buf
+{
+	enum seq_buf_type type;
+	char own_si;
+	struct colm_tree *tree;
+	struct stream_impl *si;
+	struct seq_buf *next, *prev;
+};
+
+/* List of source streams. Enables streams to be pushed/popped. */
+struct input_impl_seq
+{
+	struct input_funcs *funcs;
+	char type;
+
+	char eof_mark;
+	char eof_sent;
+
+	struct {
+		struct seq_buf *head;
+		struct seq_buf *tail;
+	} queue;
+
+	struct seq_buf *stash;
+
+	int consumed;
 };
 
 struct run_buf
 {
-	enum run_buf_type type;
 	long length;
-	struct colm_tree *tree;
 	long offset;
 	struct run_buf *next, *prev;
 
@@ -78,59 +164,15 @@ struct run_buf
 
 struct run_buf *new_run_buf( int sz );
 
-struct stream_funcs
-{
-	int (*get_parse_block)( struct stream_impl *ss, int skip, char **pdp, int *copied );
-
-	int (*get_data)( struct stream_impl *ss, char *dest, int length );
-
-	int (*consume_data)( struct colm_program *prg, struct colm_tree **sp,
-			struct stream_impl *ss, int length, struct colm_location *loc );
-	int (*undo_consume_data)( struct stream_impl *ss, const char *data, int length );
-
-	struct colm_tree *(*consume_tree)( struct stream_impl *ss );
-	void (*undo_consume_tree)( struct stream_impl *ss,
-			struct colm_tree *tree, int ignore );
-
-	/* Language elments (compile-time). */
-	struct LangEl *(*consume_lang_el)( struct stream_impl *ss,
-			long *bind_id, char **data, long *length );
-	void (*undo_consume_lang_el)( struct stream_impl *ss );
-
-	/* Private implmentation for some shared get data functions. */
-	int (*get_data_source)( struct stream_impl *ss, char *dest, int length );
-
-	void (*set_eof)( struct stream_impl *is );
-	void (*unset_eof)( struct stream_impl *is );
-
-	/* Prepending to a stream. */
-	void (*prepend_data)( struct stream_impl *in, const char *data, long len );
-	void (*prepend_tree)( struct stream_impl *is, struct colm_tree *tree, int ignore );
-	void (*prepend_stream)( struct stream_impl *in, struct colm_tree *tree );
-	int (*undo_prepend_data)( struct stream_impl *is, int length );
-	struct colm_tree *(*undo_prepend_tree)( struct stream_impl *is );
-	struct colm_tree *(*undo_prepend_stream)( struct stream_impl *in );
-
-	/* Appending to a stream. */
-	void (*append_data)( struct stream_impl *in, const char *data, long len );
-	void (*append_tree)( struct stream_impl *in, struct colm_tree *tree );
-	void (*append_stream)( struct stream_impl *in, struct colm_tree *tree );
-	struct colm_tree *(*undo_append_data)( struct stream_impl *in, int length );
-	struct colm_tree *(*undo_append_tree)( struct stream_impl *in );
-	struct colm_tree *(*undo_append_stream)( struct stream_impl *in );
-};
-
-/* List of source streams. Enables streams to be pushed/popped. */
-struct stream_impl
+struct stream_impl_data
 {
 	struct stream_funcs *funcs;
+	char type;
 
-	char eof_sent;
-	char eof;
-	char eos_sent;
-
-	struct run_buf *queue;
-	struct run_buf *queue_tail;
+	struct {
+		struct run_buf *head;
+		struct run_buf *tail;
+	} queue;
 
 	const char *data;
 	long dlen;
@@ -143,24 +185,23 @@ struct stream_impl
 	char *name;
 	FILE *file;
 
-	struct _StrCollect *collect;
-
-	struct Pattern *pattern;
-	struct PatternItem *pat_item;
-	struct Constructor *constructor;
-	struct ConsItem *cons_item;
+	struct colm_str_collect *collect;
 
 	int consumed;
 
 	/* Indentation. */
 	int level;
 	int indent;
+
+	int *line_len;
+	int lines_alloc;
+	int lines_cur;
 };
 
-struct stream_impl *colm_impl_new_pat( char *name, struct Pattern *pattern );
-struct stream_impl *colm_impl_new_cons( char *name, struct Constructor *constructor );
-struct stream_impl *colm_impl_new_generic( char *name );
+void stream_impl_push_line( struct stream_impl_data *ss, int ll );
+int stream_impl_pop_line( struct stream_impl_data *ss );
 
+struct input_impl *colm_impl_new_generic( char *name );
 
 void update_position( struct stream_impl *input_stream, const char *data, long length );
 void undo_position( struct stream_impl *input_stream, const char *data, long length );
@@ -170,7 +211,10 @@ struct stream_impl *colm_stream_impl( struct colm_struct *s );
 struct colm_str *collect_string( struct colm_program *prg, struct colm_stream *s );
 struct colm_stream *colm_stream_open_collect( struct colm_program *prg );
 
-void colm_close_stream_file( FILE *file );
+char *colm_filename_add( struct colm_program *prg, const char *fn );
+struct stream_impl *colm_impl_new_accum( char *name );
+struct stream_impl *colm_impl_consumed( char *name, int len );
+struct stream_impl *colm_impl_new_text( char *name, const char *data, int len );
 
 #ifdef __cplusplus
 }

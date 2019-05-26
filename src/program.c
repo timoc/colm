@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -20,7 +20,9 @@
  * SOFTWARE.
  */
 
+#if defined(HAVE_SYS_MMAN_H)
 #include <sys/mman.h>
+#endif
 #include <string.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -168,6 +170,11 @@ void colm_set_debug( program_t *prg, long active_realm )
 	prg->active_realm = active_realm;
 }
 
+void colm_set_reduce_clean( struct colm_program *prg, unsigned char reduce_clean )
+{
+	prg->reduce_clean = reduce_clean;
+}
+
 program_t *colm_new_program( struct colm_sections *rtd )
 {
 	program_t *prg = malloc(sizeof(program_t));
@@ -178,6 +185,7 @@ program_t *colm_new_program( struct colm_sections *rtd )
 
 	prg->rtd = rtd;
 	prg->ctx_dep_parsing = 1;
+	prg->reduce_clean = 1;
 
 	init_pool_alloc( &prg->kid_pool, sizeof(kid_t) );
 	init_pool_alloc( &prg->tree_pool, sizeof(tree_t) );
@@ -211,7 +219,7 @@ void colm_run_program2( program_t *prg, int argc, const char **argv, const int *
 	prg->argv = argv;
 	prg->argl = argl;
 
-	Execution execution;
+	execution_t execution;
 	memset( &execution, 0, sizeof(execution) );
 	execution.frame_id = prg->rtd->root_frame_id;
 

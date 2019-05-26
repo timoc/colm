@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -96,9 +96,9 @@ struct PdaCodeGen
 
 extern "C"
 {
-	void internalFsmExecute( struct pda_run *pdaRun, struct stream_impl *inputStream );
+	void internalFsmExecute( struct pda_run *pdaRun, struct input_impl *inputStream );
 	void internalSendNamedLangEl( program_t *prg, tree_t **sp,
-			struct pda_run *pdaRun, struct stream_impl *is );
+			struct pda_run *pdaRun, struct input_impl *is );
 	void internalInitBindings( struct pda_run *pdaRun );
 	void internalPopBinding( struct pda_run *pdaRun, parse_tree_t *parseTree );
 }

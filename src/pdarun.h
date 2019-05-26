@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -69,8 +69,6 @@ struct fsm_tables
 	struct GenAction **action_switch;
 	long num_action_switch;
 };
-
-void undo_stream_pull( struct stream_impl *input_stream, const char *data, long length );
 
 #if SIZEOF_LONG != 4 && SIZEOF_LONG != 8 
 	#error "SIZEOF_LONG contained an unexpected value"
@@ -275,11 +273,11 @@ struct pda_run
 	long tokend;
 	long toklen;
 	char *p, *pe;
+	char scan_eof;
 
-	/* Bits. */
-	char eof;
 	char return_result;
 	char skip_toklen;
+	char eof_term_recvd;
 
 	char *mark[MARK_SLOTS];
 	long matched_token;
@@ -318,7 +316,6 @@ struct pda_run
 
 	long steps;
 	long target_steps;
-
 
 	/* The shift count simply tracks the number of shifts that have happend.
 	 * The commit shift count is the shift count when the last commit occurred.
@@ -430,7 +427,6 @@ void colm_increment_steps( struct pda_run *pda_run );
 void colm_decrement_steps( struct pda_run *pda_run );
 
 void colm_clear_stream_impl( struct colm_program *prg, tree_t **sp, struct stream_impl *input_stream );
-void colm_clear_source_stream( struct colm_program *prg, tree_t **sp, struct stream_impl *source_stream );
 
 #define PCR_START         1
 #define PCR_DONE          2
@@ -440,32 +436,37 @@ void colm_clear_source_stream( struct colm_program *prg, tree_t **sp, struct str
 #define PCR_REVERSE       6
 
 head_t *colm_stream_pull( struct colm_program *prg, struct colm_tree **sp,
-		struct pda_run *pda_run, struct stream_impl *is, long length );
+		struct pda_run *pda_run, struct input_impl *is, long length );
 head_t *colm_string_alloc_pointer( struct colm_program *prg, const char *data, long length );
 
-void colm_stream_push_text( struct stream_impl *input_stream, const char *data, long length );
-void colm_stream_push_tree( struct stream_impl *input_stream, tree_t *tree, int ignore );
-void colm_stream_push_stream( struct stream_impl *input_stream, tree_t *tree );
+void colm_stream_push_text( struct colm_program *prg, struct input_impl *input_stream, const char *data, long length );
+void colm_stream_push_tree( struct colm_program *prg, struct input_impl *input_stream, tree_t *tree, int ignore );
+void colm_stream_push_stream( struct colm_program *prg, struct input_impl *input_stream, stream_t *stream );
 void colm_undo_stream_push( struct colm_program *prg, tree_t **sp,
-		struct stream_impl *input_stream, long length );
+		struct input_impl *input_stream, long length );
 
 kid_t *make_token_with_data( struct colm_program *prg, struct pda_run *pda_run,
-		struct stream_impl *input_stream, int id, head_t *tokdata );
+		struct input_impl *input_stream, int id, head_t *tokdata );
 
 long colm_parse_loop( struct colm_program *prg, tree_t **sp, struct pda_run *pda_run, 
-		struct stream_impl *input_stream, long entry );
+		struct input_impl *input_stream, long entry );
 
-long colm_parse_frag( struct colm_program *prg, tree_t **sp, struct pda_run *pda_run,
-		stream_t *input, long stop_id, long entry );
-long colm_parse_finish( tree_t **result, struct colm_program *prg, tree_t **sp,
-		struct pda_run *pda_run, stream_t *input , int revert_on, long entry );
+long colm_parse_frag( struct colm_program *prg, tree_t **sp,
+		struct pda_run *pda_run, input_t *input, long entry );
+long colm_parse_finish( struct colm_program *prg, tree_t **sp,
+		struct pda_run *pda_run, stream_t *input, long entry );
 long colm_parse_undo_frag( struct colm_program *prg, tree_t **sp, struct pda_run *pda_run,
-		stream_t *input, long steps, long entry );
+		input_t *input, long entry, long steps );
 
 void commit_clear_kid_list( program_t *prg, tree_t **sp, kid_t *kid );
 void commit_clear_parse_tree( program_t *prg, tree_t **sp,
 		struct pda_run *pda_run, parse_tree_t *pt );
 void commit_reduce( program_t *prg, tree_t **root,
+		struct pda_run *pda_run );
+
+tree_t *get_parsed_root( struct pda_run *pda_run, int stop );
+
+void colm_parse_reduce_commit( program_t *prg, tree_t **sp,
 		struct pda_run *pda_run );
 
 #ifdef __cplusplus

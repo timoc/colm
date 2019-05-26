@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2010-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -31,11 +31,18 @@ extern "C" {
 #include <colm/type.h>
 #include <colm/input.h>
 #include <colm/internal.h>
+#include <colm/defs.h>
 
 #define COLM_INDENT_OFF -1
 
 typedef unsigned char code_t;
-typedef unsigned long word_t;
+#if SIZEOF_UNSIGNED_LONG == SIZEOF_VOID_P
+	typedef unsigned long word_t;
+#elif SIZEOF_UNSIGNED_LONG_LONG == SIZEOF_VOID_P
+	typedef unsigned long long word_t;
+#else
+	#error "The type word_t was not declared"
+#endif
 typedef unsigned long half_t;
 
 struct bindings;
@@ -151,7 +158,7 @@ enum IterType
 	IT_User
 };
 
-typedef struct _TreeIter
+typedef struct colm_tree_iter
 {
 	enum IterType type;
 	ref_t root_ref;
@@ -176,7 +183,7 @@ typedef struct colm_generic_iter
 } generic_iter_t;
 
 /* This must overlay tree iter because some of the same bytecodes are used. */
-typedef struct _RevTreeIter
+typedef struct colm_rev_tree_iter
 {
 	enum IterType type;
 	ref_t root_ref;
@@ -207,7 +214,8 @@ typedef struct colm_user_iter
 	long search_id;
 } user_iter_t;
 
-void colm_tree_upref( tree_t *tree );
+void colm_tree_upref_( tree_t *tree );
+void colm_tree_upref( struct colm_program *prg, tree_t *tree );
 void colm_tree_downref( struct colm_program *prg, tree_t **sp, tree_t *tree );
 long colm_cmp_tree( struct colm_program *prg, const tree_t *tree1, const tree_t *tree2 );
 
@@ -287,24 +295,24 @@ tree_t *tree_iter_prev_repeat( struct colm_program *prg, tree_t ***psp, tree_ite
 
 /* An automatically grown buffer for collecting tokens. Always reuses space;
  * never down resizes. */
-typedef struct _StrCollect
+typedef struct colm_str_collect
 {
 	char *data;
 	int allocated;
 	int length;
-} StrCollect;
+} str_collect_t;
 
-void init_str_collect( StrCollect *collect );
-void str_collect_destroy( StrCollect *collect );
-void str_collect_append( StrCollect *collect, const char *data, long len );
-void str_collect_clear( StrCollect *collect );
+void init_str_collect( str_collect_t *collect );
+void str_collect_destroy( str_collect_t *collect );
+void str_collect_append( str_collect_t *collect, const char *data, long len );
+void str_collect_clear( str_collect_t *collect );
 tree_t *tree_trim( struct colm_program *prg, tree_t **sp, tree_t *tree );
 
 void colm_print_tree_collect( struct colm_program *prg, tree_t **sp,
-		StrCollect *collect, tree_t *tree, int trim );
+		str_collect_t *collect, tree_t *tree, int trim );
 
 void colm_print_tree_collect_a( struct colm_program *prg, tree_t **sp,
-		StrCollect *collect, tree_t *tree, int trim );
+		str_collect_t *collect, tree_t *tree, int trim );
 
 void colm_print_tree_file( struct colm_program *prg, tree_t **sp,
 		struct stream_impl *impl, tree_t *tree, int trim );
@@ -312,7 +320,7 @@ void colm_print_xml_stdout( struct colm_program *prg, tree_t **sp,
 		struct stream_impl *impl, tree_t *tree, int comm_attr, int trim );
 
 void colm_postfix_tree_collect( struct colm_program *prg, tree_t **sp,
-		StrCollect *collect, tree_t *tree, int trim );
+		str_collect_t *collect, tree_t *tree, int trim );
 void colm_postfix_tree_file( struct colm_program *prg, tree_t **sp,
 		struct stream_impl *impl, tree_t *tree, int trim );
 
@@ -342,7 +350,6 @@ void colm_uiter_destroy( struct colm_program *prg, tree_t ***psp, user_iter_t *u
 void colm_uiter_unwind( struct colm_program *prg, tree_t ***psp, user_iter_t *uiter );
 
 tree_t *cast_tree( struct colm_program *prg, int lang_el_id, tree_t *tree );
-struct stream_impl *stream_to_impl( stream_t *ptr );
 
 void colm_init_list_iter( generic_iter_t *list_iter, tree_t **stack_root,
 		long arg_size, long root_size, const ref_t *root_ref, int generic_id );
@@ -371,6 +378,14 @@ head_t *string_alloc_full( struct colm_program *prg, const char *data, long leng
 tree_t *construct_string( struct colm_program *prg, head_t *s );
 
 void free_kid_list( program_t *prg, kid_t *kid );
+
+void colm_print_tree_collect_xml( program_t *prg, tree_t **sp,
+		str_collect_t *collect, tree_t *tree, int trim );
+
+void colm_print_tree_collect_xml_ac( program_t *prg, tree_t **sp,
+		str_collect_t *collect, tree_t *tree, int trim );
+
+head_t *tree_to_str( program_t *prg, tree_t **sp, tree_t *tree, int trim, int attrs );
 
 #if defined(__cplusplus)
 }

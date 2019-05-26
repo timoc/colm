@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -450,7 +450,7 @@ void PdaCodeGen::writeRuntimeData( colm_sections *runtimeData, struct pda_tables
 				"struct pda_run *pda_run, int id );\n"
 		"int " << objectName << "_reducer_need_ign( program_t *prg, "
 				"struct pda_run *pda_run );\n"
-		"void " << objectName << "_read_reduce( program_t *prg, int reducer, stream_t *stream );\n"
+		"void " << objectName << "_read_reduce( program_t *prg, int reducer, input_t *stream );\n"
 		"\n";
 
 	out <<
@@ -487,6 +487,7 @@ void PdaCodeGen::writeRuntimeData( colm_sections *runtimeData, struct pda_tables
 		"	" << genericInfo() << ",\n"
 		"	" << runtimeData->num_generics << ",\n"
 		"	" << runtimeData->argv_generic_id << ",\n"
+		"	" << runtimeData->stds_generic_id << ",\n"
 		"\n"
 		"	" << litdata() << ",\n"
 		"	" << litlen() << ",\n"
@@ -503,6 +504,7 @@ void PdaCodeGen::writeRuntimeData( colm_sections *runtimeData, struct pda_tables
 		"	" << runtimeData->global_size << ",\n"
 		"\n"
 		"	" << runtimeData->first_non_term_id << ",\n"
+		"	" << runtimeData->first_struct_el_id << ",\n"
 		"	" << runtimeData->integer_id << ",\n"
 		"	" << runtimeData->string_id << ",\n"
 		"	" << runtimeData->any_id << ",\n"
@@ -510,6 +512,10 @@ void PdaCodeGen::writeRuntimeData( colm_sections *runtimeData, struct pda_tables
 		"	" << runtimeData->no_token_id << ",\n"
 		"	" << runtimeData->global_id << ",\n"
 		"	" << runtimeData->argv_el_id << ",\n"
+		"	" << runtimeData->stds_el_id << ",\n"
+		"	" << runtimeData->struct_inbuilt_id << ",\n"
+		"	" << runtimeData->struct_inbuilt_id << ",\n"
+		"	" << runtimeData->struct_stream_id << ",\n"
 		"	&fsm_execute,\n"
 		"	&sendNamedLangEl,\n"
 		"	&initBindings,\n"

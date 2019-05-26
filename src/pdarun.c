@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2015 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -70,7 +70,7 @@ static void init_fsm_run( program_t *prg, struct pda_run *pda_run )
 
 	pda_run->p = pda_run->pe = 0;
 	pda_run->toklen = 0;
-	pda_run->eof = 0;
+	pda_run->scan_eof = 0;
 
 	pda_run->pre_region = -1;
 }
@@ -102,7 +102,7 @@ void colm_decrement_steps( struct pda_run *pda_run )
 }
 
 head_t *colm_stream_pull( program_t *prg, tree_t **sp, struct pda_run *pda_run,
-		struct stream_impl *is, long length )
+		struct input_impl *is, long length )
 {
 	if ( pda_run != 0 ) {
 		struct run_buf *run_buf = pda_run->consume_buf;
@@ -114,9 +114,9 @@ head_t *colm_stream_pull( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 
 		char *dest = run_buf->data + run_buf->length;
 
-		is->funcs->get_data( is, dest, length );
+		is->funcs->get_data( prg, is, dest, length );
 		location_t *loc = location_allocate( prg );
-		is->funcs->consume_data( prg, sp, is, length, loc );
+		is->funcs->consume_data( prg, is, length, loc );
 
 		run_buf->length += length;
 
@@ -132,52 +132,45 @@ head_t *colm_stream_pull( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 		head_t *head = init_str_space( length );
 		char *dest = (char*)head->data;
 
-		is->funcs->get_data( is, dest, length );
+		is->funcs->get_data( prg, is, dest, length );
 		location_t *loc = location_allocate( prg );
-		is->funcs->consume_data( prg, sp, is, length, loc );
+		is->funcs->consume_data( prg, is, length, loc );
 		head->location = loc;
 
 		return head;
 	}
 }
 
-void undo_stream_pull( struct stream_impl *is, const char *data, long length )
+void colm_stream_push_text( struct colm_program *prg, struct input_impl *is, const char *data, long length )
 {
-	//debug( REALM_PARSE, "undoing stream pull\n" );
-
-	is->funcs->prepend_data( is, data, length );
+	is->funcs->prepend_data( prg, is, data, length );
 }
 
-void colm_stream_push_text( struct stream_impl *is, const char *data, long length )
+void colm_stream_push_tree( struct colm_program *prg, struct input_impl *is, tree_t *tree, int ignore )
 {
-	is->funcs->prepend_data( is, data, length );
+	is->funcs->prepend_tree( prg, is, tree, ignore );
 }
 
-void colm_stream_push_tree( struct stream_impl *is, tree_t *tree, int ignore )
+void colm_stream_push_stream( struct colm_program *prg, struct input_impl *is, stream_t *stream )
 {
-	is->funcs->prepend_tree( is, tree, ignore );
+	is->funcs->prepend_stream( prg, is, stream );
 }
 
-void colm_stream_push_stream( struct stream_impl *is, tree_t *tree )
-{
-	is->funcs->prepend_stream( is, tree );
-}
-
-void colm_undo_stream_push( program_t *prg, tree_t **sp, struct stream_impl *is, long length )
+void colm_undo_stream_push( program_t *prg, tree_t **sp, struct input_impl *is, long length )
 {
 	if ( length < 0 ) {
-		tree_t *tree = is->funcs->undo_prepend_tree( is );
-		colm_tree_downref( prg, sp, tree );
+		/* tree_t *tree = */ is->funcs->undo_prepend_tree( prg, is );
+		// colm_tree_downref( prg, sp, tree );
 	}
 	else {
-		is->funcs->undo_prepend_data( is, length );
+		is->funcs->undo_prepend_data( prg, is, length );
 	}
 }
 
 /* Should only be sending back whole tokens/ignores, therefore the send back
  * should never cross a buffer boundary. Either we slide back data, or we move to
  * a previous buffer and slide back data. */
-static void send_back_text( struct stream_impl *is, const char *data, long length )
+static void send_back_text( struct colm_program *prg, struct input_impl *is, const char *data, long length )
 {
 	//debug( REALM_PARSE, "push back of %ld characters\n", length );
 
@@ -187,12 +180,12 @@ static void send_back_text( struct stream_impl *is, const char *data, long lengt
 	//debug( REALM_PARSE, "sending back text: %.*s\n", 
 	//		(int)length, data );
 
-	is->funcs->undo_consume_data( is, data, length );
+	is->funcs->undo_consume_data( prg, is, data, length );
 }
 
-static void send_back_tree( struct stream_impl *is, tree_t *tree )
+static void send_back_tree( struct colm_program *prg, struct input_impl *is, tree_t *tree )
 {
-	is->funcs->undo_consume_tree( is, tree, false );
+	is->funcs->undo_consume_tree( prg, is, tree, false );
 }
 
 /*
@@ -200,7 +193,7 @@ static void send_back_tree( struct stream_impl *is, tree_t *tree )
  *   PCR_REVERSE
  */
 static void send_back_ignore( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is, parse_tree_t *parse_tree )
+		struct pda_run *pda_run, struct input_impl *is, parse_tree_t *parse_tree )
 {
 	#ifdef DEBUG
 	struct lang_el_info *lel_info = prg->rtd->lel_info;
@@ -212,8 +205,12 @@ static void send_back_ignore( program_t *prg, tree_t **sp,
 	head_t *head = parse_tree->shadow->tree->tokdata;
 	int artificial = parse_tree->flags & PF_ARTIFICIAL;
 
-	if ( head != 0 && !artificial )
-		send_back_text( is, string_data( head ), head->length );
+	if ( head != 0 ) {
+		if ( artificial )
+			send_back_tree( prg, is, parse_tree->shadow->tree );
+		else
+			send_back_text( prg, is, string_data( head ), head->length );
+	}
 
 	colm_decrement_steps( pda_run );
 
@@ -237,7 +234,7 @@ static void reset_token( struct pda_run *pda_run )
 	if ( pda_run->tokstart != 0 ) {
 		pda_run->p = pda_run->pe = 0;
 		pda_run->toklen = 0;
-		pda_run->eof = 0;
+		pda_run->scan_eof = 0;
 	}
 }
 
@@ -246,7 +243,7 @@ static void reset_token( struct pda_run *pda_run )
  */
 
 static void send_back( program_t *prg, tree_t **sp, struct pda_run *pda_run,
-		struct stream_impl *is, parse_tree_t *parse_tree )
+		struct input_impl *is, parse_tree_t *parse_tree )
 {
 	debug( prg, REALM_PARSE, "sending back: %s\n",
 			prg->rtd->lel_info[parse_tree->id].name );
@@ -254,7 +251,7 @@ static void send_back( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 	if ( parse_tree->flags & PF_NAMED ) {
 		/* Send the named lang el back first, then send back any leading
 		 * whitespace. */
-		is->funcs->undo_consume_lang_el( is );
+		is->funcs->undo_consume_lang_el( prg, is );
 	}
 
 	colm_decrement_steps( pda_run );
@@ -268,9 +265,9 @@ static void send_back( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 			parse_tree->flags &= ~PF_HAS_RCODE;
 		}
 
-		colm_tree_upref( parse_tree->shadow->tree );
+		colm_tree_upref( prg, parse_tree->shadow->tree );
 
-		send_back_tree( is, parse_tree->shadow->tree );
+		send_back_tree( prg, is, parse_tree->shadow->tree );
 	}
 	else {
 		/* Check for reverse code. */
@@ -281,12 +278,12 @@ static void send_back( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 		}
 
 		/* Push back the token data. */
-		send_back_text( is, string_data( parse_tree->shadow->tree->tokdata ), 
+		send_back_text( prg, is, string_data( parse_tree->shadow->tree->tokdata ), 
 				string_length( parse_tree->shadow->tree->tokdata ) );
 
 		/* If eof was just sent back remember that it needs to be sent again. */
 		if ( parse_tree->id == prg->rtd->eof_lel_ids[pda_run->parser_id] )
-			is->eof_sent = false;
+			pda_run->eof_term_recvd = false;
 
 		/* If the item is bound then store remove it from the bindings array. */
 		prg->rtd->pop_binding( pda_run, parse_tree );
@@ -355,7 +352,7 @@ static void ignore_tree_art( program_t *prg, struct pda_run *pda_run, tree_t *tr
 }
 
 kid_t *make_token_with_data( program_t *prg, struct pda_run *pda_run,
-		struct stream_impl *is, int id, head_t *tokdata )
+		struct input_impl *is, int id, head_t *tokdata )
 {
 	/* Make the token object. */
 	long object_length = prg->rtd->lel_info[id].object_length;
@@ -384,7 +381,7 @@ kid_t *make_token_with_data( program_t *prg, struct pda_run *pda_run,
 					pda_run->mark[ca->mark_leave] -
 							pda_run->mark[ca->mark_enter] );
 			tree_t *string = construct_string( prg, data );
-			colm_tree_upref( string );
+			colm_tree_upref( prg, string );
 			colm_tree_set_field( prg, input->tree, ca->offset, string );
 		}
 	}
@@ -452,7 +449,7 @@ static void report_parse_error( program_t *prg, tree_t **sp, struct pda_run *pda
 	tree_t *tree = construct_string( prg, error_head );
 	colm_tree_downref( prg, sp, pda_run->parse_error_text );
 	pda_run->parse_error_text = tree;
-	colm_tree_upref( pda_run->parse_error_text );
+	colm_tree_upref( prg, pda_run->parse_error_text );
 }
 
 static void attach_right_ignore( program_t *prg, tree_t **sp,
@@ -726,7 +723,7 @@ static void handle_error( program_t *prg, tree_t **sp, struct pda_run *pda_run )
 }
 
 static head_t *extract_match( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is )
+		struct pda_run *pda_run, struct input_impl *is )
 {
 	long length = pda_run->toklen;
 
@@ -741,9 +738,9 @@ static head_t *extract_match( program_t *prg, tree_t **sp,
 
 	char *dest = run_buf->data + run_buf->length;
 
-	is->funcs->get_data( is, dest, length );
+	is->funcs->get_data( prg, is, dest, length );
 	location_t *location = location_allocate( prg );
-	is->funcs->consume_data( prg, sp, is, length, location );
+	is->funcs->consume_data( prg, is, length, location );
 
 	run_buf->length += length;
 
@@ -755,19 +752,19 @@ static head_t *extract_match( program_t *prg, tree_t **sp,
 
 	head->location = location;
 
-	debug( prg, REALM_PARSE, "location byte: %d\n", is->byte );
+	debug( prg, REALM_PARSE, "location byte: %d\n", head->location->byte );
 
 	return head;
 }
 
 static head_t *extract_no_d( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is )
+		struct pda_run *pda_run, struct input_impl *is )
 {
 	long length = pda_run->toklen;
 
 	/* Just a consume, no data allocate. */
 	location_t *location = location_allocate( prg );
-	is->funcs->consume_data( prg, sp, is, length, location );
+	is->funcs->consume_data( prg, is, length, location );
 
 	pda_run->p = pda_run->pe = 0;
 	pda_run->toklen = 0;
@@ -777,13 +774,13 @@ static head_t *extract_no_d( program_t *prg, tree_t **sp,
 
 	head->location = location;
 
-	debug( prg, REALM_PARSE, "location byte: %d\n", is->byte );
+	debug( prg, REALM_PARSE, "location byte: %d\n", head->location->byte );
 
 	return head;
 }
 
 static head_t *extract_no_l( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is )
+		struct pda_run *pda_run, struct input_impl *is )
 {
 	long length = pda_run->toklen;
 
@@ -798,12 +795,12 @@ static head_t *extract_no_l( program_t *prg, tree_t **sp,
 
 	char *dest = run_buf->data + run_buf->length;
 
-	is->funcs->get_data( is, dest, length );
+	is->funcs->get_data( prg, is, dest, length );
 
 	/* Using a dummpy location. */
 	location_t location;
 	memset( &location, 0, sizeof( location ) );
-	is->funcs->consume_data( prg, sp, is, length, &location );
+	is->funcs->consume_data( prg, is, length, &location );
 
 	run_buf->length += length;
 
@@ -816,32 +813,32 @@ static head_t *extract_no_l( program_t *prg, tree_t **sp,
 	/* Don't pass the location. */
 	head->location = 0;
 
-	debug( prg, REALM_PARSE, "location byte: %d\n", is->byte );
+	debug( prg, REALM_PARSE, "location byte: %d\n", location.byte );
 
 	return head;
 }
 
 static head_t *consume_match( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is )
+		struct pda_run *pda_run, struct input_impl *is )
 {
 	long length = pda_run->toklen;
 
 	/* No data or location returned. We just consume the data. */
 	location_t dummy_loc;
 	memset( &dummy_loc, 0, sizeof(dummy_loc) );
-	is->funcs->consume_data( prg, sp, is, length, &dummy_loc );
+	is->funcs->consume_data( prg, is, length, &dummy_loc );
 
 	pda_run->p = pda_run->pe = 0;
 	pda_run->toklen = 0;
 	pda_run->tokstart = 0;
 
-	debug( prg, REALM_PARSE, "location byte: %d\n", is->byte );
+	debug( prg, REALM_PARSE, "location byte: %d\n", dummy_loc.byte );
 
 	return 0;
 }
 
 
-static head_t *peek_match( program_t *prg, struct pda_run *pda_run, struct stream_impl *is )
+static head_t *peek_match( program_t *prg, struct pda_run *pda_run, struct input_impl *is )
 {
 	long length = pda_run->toklen;
 
@@ -854,7 +851,7 @@ static head_t *peek_match( program_t *prg, struct pda_run *pda_run, struct strea
 
 	char *dest = run_buf->data + run_buf->length;
 
-	is->funcs->get_data( is, dest, length );
+	is->funcs->get_data( prg, is, dest, length );
 
 	pda_run->p = pda_run->pe = 0;
 	pda_run->toklen = 0;
@@ -862,18 +859,16 @@ static head_t *peek_match( program_t *prg, struct pda_run *pda_run, struct strea
 	head_t *head = colm_string_alloc_pointer( prg, dest, length );
 
 	head->location = location_allocate( prg );
-	head->location->line = is->line;
-	head->location->column = is->column;
-	head->location->byte = is->byte;
+	is->funcs->transfer_loc( prg, head->location, is );
 
-	debug( prg, REALM_PARSE, "location byte: %d\n", is->byte );
+	debug( prg, REALM_PARSE, "location byte: %d\n", head->location->byte );
 
 	return head;
 }
 
 
 static void send_ignore( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is, long id )
+		struct pda_run *pda_run, struct input_impl *is, long id )
 {
 	if ( prg->rtd->reducer_need_ign( prg, pda_run ) == RN_NONE ) {
 		consume_match( prg, sp, pda_run, is );
@@ -897,7 +892,7 @@ static void send_ignore( program_t *prg, tree_t **sp,
 }
 
 static void send_token( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is, long id )
+		struct pda_run *pda_run, struct input_impl *is, long id )
 {
 	int empty_ignore = pda_run->accum_ignore == 0;
 
@@ -940,10 +935,10 @@ static void send_token( program_t *prg, tree_t **sp,
 }
 
 static void send_tree( program_t *prg, tree_t **sp, struct pda_run *pda_run,
-		struct stream_impl *is )
+		struct input_impl *is )
 {
 	kid_t *input = kid_allocate( prg );
-	input->tree = is->funcs->consume_tree( is );
+	input->tree = is->funcs->consume_tree( prg, is );
 
 	colm_increment_steps( pda_run );
 
@@ -956,14 +951,14 @@ static void send_tree( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 }
 
 static void send_ignore_tree( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is )
+		struct pda_run *pda_run, struct input_impl *is )
 {
-	tree_t *tree = is->funcs->consume_tree( is );
+	tree_t *tree = is->funcs->consume_tree( prg, is );
 	ignore_tree_art( prg, pda_run, tree );
 }
 
 static void send_collect_ignore( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is, int id )
+		struct pda_run *pda_run, struct input_impl *is, int id )
 {
 	debug( prg, REALM_PARSE, "token: CI\n" );
 
@@ -972,9 +967,7 @@ static void send_collect_ignore( program_t *prg, tree_t **sp,
 	/* Make the token data. */
 	head_t *tokdata = head_allocate( prg );
 	tokdata->location = location_allocate( prg );
-	tokdata->location->line = is->line;
-	tokdata->location->column = is->column;
-	tokdata->location->byte = is->byte;
+	is->funcs->transfer_loc( prg, tokdata->location, is );
 
 	debug( prg, REALM_PARSE, "token: %s  text: %.*s\n",
 		prg->rtd->lel_info[id].name,
@@ -1006,7 +999,8 @@ static int get_next_pre_region( struct pda_run *pda_run )
 	return pda_run->pda_tables->token_pre_regions[pda_run->next_region_ind];
 }
 
-static void send_eof( program_t *prg, tree_t **sp, struct pda_run *pda_run, struct stream_impl *is )
+static void send_eof( program_t *prg, tree_t **sp, struct pda_run *pda_run,
+		struct input_impl *is )
 {
 	debug( prg, REALM_PARSE, "token: _EOF\n" );
 
@@ -1014,9 +1008,7 @@ static void send_eof( program_t *prg, tree_t **sp, struct pda_run *pda_run, stru
 
 	head_t *head = head_allocate( prg );
 	head->location = location_allocate( prg );
-	head->location->line = is->line;
-	head->location->column = is->column;
-	head->location->byte = is->byte;
+	is->funcs->transfer_loc( prg, head->location, is );
 
 	kid_t *input = kid_allocate( prg );
 	input->tree = tree_allocate( prg );
@@ -1041,7 +1033,7 @@ static void new_token( program_t *prg, struct pda_run *pda_run )
 {
 	pda_run->p = pda_run->pe = 0;
 	pda_run->toklen = 0;
-	pda_run->eof = 0;
+	pda_run->scan_eof = 0;
 
 	/* Init the scanner vars. */
 	pda_run->act = 0;
@@ -1080,7 +1072,7 @@ static void push_bt_point( program_t *prg, struct pda_run *pda_run )
 
 		kid_t *kid = kid_allocate( prg );
 		kid->tree = tree;
-		colm_tree_upref( tree );
+		colm_tree_upref( prg, tree );
 		kid->next = pda_run->bt_point;
 		pda_run->bt_point = kid;
 	}
@@ -1095,7 +1087,7 @@ static void push_bt_point( program_t *prg, struct pda_run *pda_run )
 #define SCAN_LANG_EL           -2
 #define SCAN_EOF               -1
 
-static long scan_token( program_t *prg, struct pda_run *pda_run, struct stream_impl *is )
+static long scan_token( program_t *prg, struct pda_run *pda_run, struct input_impl *is )
 {
 	if ( pda_run->trigger_undo )
 		return SCAN_UNDO;
@@ -1103,7 +1095,8 @@ static long scan_token( program_t *prg, struct pda_run *pda_run, struct stream_i
 	while ( true ) {
 		char *pd = 0;
 		int len = 0;
-		int type = is->funcs->get_parse_block( is, pda_run->toklen, &pd, &len );
+		int toklen = pda_run->toklen;
+		int type = is->funcs->get_parse_block( prg, is, &toklen, &pd, &len );
 
 		switch ( type ) {
 			case INPUT_DATA:
@@ -1114,14 +1107,14 @@ static long scan_token( program_t *prg, struct pda_run *pda_run, struct stream_i
 			case INPUT_EOS:
 				pda_run->p = pda_run->pe = 0;
 				if ( pda_run->tokstart != 0 )
-					pda_run->eof = 1;
+					pda_run->scan_eof = 1;
 				debug( prg, REALM_SCAN, "EOS *******************\n" );
 				break;
 
 			case INPUT_EOF:
 				pda_run->p = pda_run->pe = 0;
 				if ( pda_run->tokstart != 0 )
-					pda_run->eof = 1;
+					pda_run->scan_eof = 1;
 				else 
 					return SCAN_EOF;
 				break;
@@ -1132,20 +1125,20 @@ static long scan_token( program_t *prg, struct pda_run *pda_run, struct stream_i
 
 			case INPUT_LANG_EL:
 				if ( pda_run->tokstart != 0 )
-					pda_run->eof = 1;
+					pda_run->scan_eof = 1;
 				else 
 					return SCAN_LANG_EL;
 				break;
 
 			case INPUT_TREE:
 				if ( pda_run->tokstart != 0 )
-					pda_run->eof = 1;
+					pda_run->scan_eof = 1;
 				else 
 					return SCAN_TREE;
 				break;
 			case INPUT_IGNORE:
 				if ( pda_run->tokstart != 0 )
-					pda_run->eof = 1;
+					pda_run->scan_eof = 1;
 				else
 					return SCAN_IGNORE;
 				break;
@@ -1182,7 +1175,7 @@ static long scan_token( program_t *prg, struct pda_run *pda_run, struct stream_i
 		}
 
 		/* Check for no match on eof (trailing data that partially matches a token). */
-		if ( pda_run->eof )
+		if ( pda_run->scan_eof )
 			return SCAN_ERROR;
 
 		/* Got here because the state machine didn't match a token or encounter
@@ -1194,7 +1187,7 @@ static long scan_token( program_t *prg, struct pda_run *pda_run, struct stream_i
 	return SCAN_ERROR;
 }
 
-static tree_t *get_parsed_root( struct pda_run *pda_run, int stop )
+tree_t *get_parsed_root( struct pda_run *pda_run, int stop )
 {
 	if ( pda_run->parse_error )
 		return 0;
@@ -1324,7 +1317,8 @@ void colm_pda_init( program_t *prg, struct pda_run *pda_run, struct pda_tables *
 		pda_run->parse_tree_pool = &prg->parse_tree_pool;
 	}
 
-	debug( prg, REALM_PARSE, "initializing struct pda_run\n" );
+	debug( prg, REALM_PARSE, "initializing struct pda_run %s\n",
+		prg->rtd->lel_info[prg->rtd->parser_lel_ids[parser_id]].name );
 
 	/* FIXME: need the right one here. */
 	pda_run->pda_cs = prg->rtd->start_states[pda_run->parser_id];
@@ -1363,6 +1357,7 @@ void colm_pda_init( program_t *prg, struct pda_run *pda_run, struct pda_tables *
 	pda_run->reject = false;
 
 	pda_run->rc_block_count = 0;
+	pda_run->eof_term_recvd = 0;
 
 	init_fsm_run( prg, pda_run );
 	new_token( prg, pda_run );
@@ -1394,7 +1389,7 @@ static long stack_top_target( program_t *prg, struct pda_run *pda_run )
  *   PCR_REVERSE
  */
 static long parse_token( program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, struct stream_impl *is, long entry )
+		struct pda_run *pda_run, struct input_impl *is, long entry )
 {
 	int pos;
 	unsigned int *action;
@@ -1488,7 +1483,7 @@ again:
 
 			ref_t *ref = (ref_t*)kid_allocate( prg );
 			ref->kid = pda_run->lel->shadow;
-			//colm_tree_upref( pdaRun->tree );
+			//colm_tree_upref( prg, pdaRun->tree );
 			ref->next = pda_run->token_list;
 			pda_run->token_list = ref;
 		}
@@ -1638,7 +1633,7 @@ again:
 //
 //					/* Copy it in. */
 //					pdaRun->redLel->tree = newPt;
-//					colm_tree_upref( pdaRun->redLel->tree );
+//					colm_tree_upref( prg, pdaRun->redLel->tree );
 
 					/* Add the restore instruct. */
 					append_code_val( &pda_run->rcode_collect, IN_RESTORE_LHS );
@@ -1964,7 +1959,7 @@ _out:
  */
 
 long colm_parse_loop( program_t *prg, tree_t **sp, struct pda_run *pda_run, 
-		struct stream_impl *is, long entry )
+		struct input_impl *is, long entry )
 {
 	struct lang_el_info *lel_info = prg->rtd->lel_info;
 
@@ -1975,7 +1970,7 @@ long colm_parse_loop( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 	pda_run->stop = false;
 
 	while ( true ) {
-		debug( prg, REALM_PARSE, "parse loop start %d:%d\n", is->line, is->column );
+		debug( prg, REALM_PARSE, "parse loop start\n" );
 
 		/* Pull the current scanner from the parser. This can change during
 		 * parsing due to inputStream pushes, usually for the purpose of includes.
@@ -2009,7 +2004,7 @@ long colm_parse_loop( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 
 		/* Check for EOF. */
 		if ( pda_run->token_id == SCAN_EOF ) {
-			is->eof_sent = true;
+			pda_run->eof_term_recvd = true;
 			send_eof( prg, sp, pda_run, is );
 
 			pda_run->frame_id = prg->rtd->region_info[pda_run->region].eof_frame_id;
@@ -2092,7 +2087,7 @@ long colm_parse_loop( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 
 			pda_run->p = pda_run->pe = 0;
 			pda_run->toklen = 0;
-			pda_run->eof = 0;
+			pda_run->scan_eof = 0;
 
 			pda_run->fi = &prg->rtd->frame_info[prg->rtd->lel_info[pda_run->token_id].frame_id];
 			pda_run->frame_id = prg->rtd->lel_info[pda_run->token_id].frame_id;
@@ -2166,7 +2161,7 @@ skip_send:
 			break;
 		}
 
-		if ( is->eof_sent ) {
+		if ( pda_run->eof_term_recvd ) {
 			debug( prg, REALM_PARSE, "parsing stopped by EOF\n" );
 			break;
 		}
@@ -2206,18 +2201,16 @@ skip_send:
 }
 
 
-long colm_parse_frag( program_t *prg, tree_t **sp, struct pda_run *pda_run,
-		stream_t *input, long stop_id, long entry )
+long colm_parse_frag( program_t *prg, tree_t **sp,
+		struct pda_run *pda_run, input_t *input, long entry )
 {
 	/* COROUTINE */
 	switch ( entry ) {
 	case PCR_START:
 
 	if ( ! pda_run->parse_error ) {
-		pda_run->stop_target = stop_id;
-
-		long pcr = colm_parse_loop( prg, sp, pda_run, 
-				stream_to_impl( input ), entry );
+		long pcr = colm_parse_loop( prg, sp, pda_run,
+				input_to_impl( input ), entry );
 
 		while ( pcr != PCR_DONE ) {
 
@@ -2228,77 +2221,10 @@ long colm_parse_frag( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 			case PCR_PRE_EOF:
 			case PCR_REVERSE:
 
-			pcr = colm_parse_loop( prg, sp, pda_run, 
-					stream_to_impl( input ), entry );
+			pcr = colm_parse_loop( prg, sp, pda_run,
+					input_to_impl( input ), entry );
 		}
 	}
-
-	/* COROUTINE */
-	case PCR_DONE:
-	break; }
-
-	return PCR_DONE;
-}
-
-long colm_parse_finish( tree_t **result, program_t *prg, tree_t **sp,
-		struct pda_run *pda_run, stream_t *input , int revert_on, long entry )
-{
-	struct stream_impl *si;
-
-	/* COROUTINE */
-	switch ( entry ) {
-	case PCR_START:
-
-	if ( pda_run->stop_target <= 0 ) {
-		si = stream_to_impl( input );
-		si->funcs->set_eof( si );
-
-		if ( ! pda_run->parse_error ) {
-			si = stream_to_impl( input );
-			long pcr = colm_parse_loop( prg, sp, pda_run, si, entry );
-
-			while ( pcr != PCR_DONE ) {
-
-				/* COROUTINE */
-				return pcr;
-				case PCR_REDUCTION:
-				case PCR_GENERATION:
-				case PCR_PRE_EOF:
-				case PCR_REVERSE:
-
-				si = stream_to_impl( input );
-				pcr = colm_parse_loop( prg, sp, pda_run, si, entry );
-			}
-		}
-	}
-
-	/* FIXME: need something here to check that we are not stopped waiting for
-	 * more data when we are actually expected to finish. This check doesn't
-	 * work (at time of writing). */
-	//assert( (pdaRun->stopTarget > 0 && pdaRun->stopParsing) || 
-	//		streamToImpl( input )->eofSent );
-
-	/* Flush out anything not committed. */
-	if ( pda_run->reducer )
-		commit_reduce( prg, sp, pda_run );
-	
-	/* What to do here.
-	 * if ( pda_run->fail_parsing )
-	 *   goto fail; */
-
-	if ( !revert_on )
-		colm_rcode_downref_all( prg, sp, &pda_run->reverse_code );
-	
-	tree_t *tree = get_parsed_root( pda_run, pda_run->stop_target > 0 );
-
-	if ( pda_run->reducer ) {
-		*result = 0;
-	}
-	else {
-		colm_tree_upref( tree );
-		*result = tree;
-	}
-
 
 	/* COROUTINE */
 	case PCR_DONE:
@@ -2308,7 +2234,7 @@ long colm_parse_finish( tree_t **result, program_t *prg, tree_t **sp,
 }
 
 long colm_parse_undo_frag( program_t *prg, tree_t **sp, struct pda_run *pda_run,
-		stream_t *input, long steps, long entry )
+		input_t *input, long entry, long steps )
 {
 	debug( prg, REALM_PARSE,
 			"undo parse frag, target steps: %ld, pdarun steps: %ld\n",
@@ -2328,7 +2254,7 @@ long colm_parse_undo_frag( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 		pda_run->trigger_undo = 1;
 
 		/* The parse loop will recognise the situation. */
-		long pcr = colm_parse_loop( prg, sp, pda_run, stream_to_impl(input), entry );
+		long pcr = colm_parse_loop( prg, sp, pda_run, input_to_impl(input), entry );
 		while ( pcr != PCR_DONE ) {
 
 			/* COROUTINE */
@@ -2338,7 +2264,7 @@ long colm_parse_undo_frag( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 			case PCR_PRE_EOF:
 			case PCR_REVERSE:
 
-			pcr = colm_parse_loop( prg, sp, pda_run, stream_to_impl(input), entry );
+			pcr = colm_parse_loop( prg, sp, pda_run, input_to_impl(input), entry );
 		}
 
 		/* Reset environment. */
@@ -2352,5 +2278,13 @@ long colm_parse_undo_frag( program_t *prg, tree_t **sp, struct pda_run *pda_run,
 	break; }
 
 	return PCR_DONE;
+}
+
+void colm_parse_reduce_commit( program_t *prg, tree_t **sp,
+		struct pda_run *pda_run )
+{
+	/* Flush out anything not committed. */
+	if ( pda_run->reducer )
+		commit_reduce( prg, sp, pda_run );
 }
 

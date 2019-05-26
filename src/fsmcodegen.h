@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2001-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -101,7 +101,7 @@ protected:
 
 	string P() { return ACCESS() + "p"; }
 	string PE() { return ACCESS() + "pe"; }
-	string DATA_EOF() { return ACCESS() + "eof"; }
+	string DATA_EOF() { return ACCESS() + "scan_eof"; }
 
 	string CS();
 	string TOP() { return ACCESS() + "top"; }

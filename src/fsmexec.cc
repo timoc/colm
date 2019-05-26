@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -89,7 +89,7 @@ void execAction( struct pda_run *pdaRun, GenAction *genAction )
 		pdaRun->mark[genAction->markId-1] = pdaRun->p;
 }
 
-extern "C" void internalFsmExecute( struct pda_run *pdaRun, struct stream_impl *inputStream )
+extern "C" void internalFsmExecute( struct pda_run *pdaRun, struct input_impl *inputStream )
 {
 	int _klen;
 	unsigned int _trans;
@@ -193,7 +193,7 @@ _again:
 	if ( ++pdaRun->p != pdaRun->pe )
 		goto _loop_head;
 out:
-	if ( pdaRun->eof ) {
+	if ( pdaRun->scan_eof ) {
 		pdaRun->return_result = false;
 		pdaRun->skip_toklen = false;
 		_acts = pdaRun->fsm_tables->actions + pdaRun->fsm_tables->eof_actions[pdaRun->fsm_cs];

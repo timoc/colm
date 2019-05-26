@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -72,7 +72,7 @@ struct TemplateType;
 struct ObjectMethod;
 struct Reduction;
 struct Production;
-
+struct LangVarRef;
 
 /* 
  * Code Vector
@@ -831,7 +831,8 @@ struct NameScope
 	:
 		owningObj(0),
 		parentScope(0),
-		childIter(0)
+		childIter(0),
+		caseClauseVarRef(0)
 	{}
 
 	ObjectDef *owningObj;
@@ -843,6 +844,7 @@ struct NameScope
 
 	/* For iteration after declaration. */
 	NameScope *childIter;
+	LangVarRef *caseClauseVarRef;
 
 	NameScope *prev, *next;
 
@@ -862,6 +864,7 @@ struct NameScope
 
 	ObjectField *checkRedecl( const String &name );
 	void insertField( const String &name, ObjectField *value );
+
 };
 
 
@@ -925,6 +928,7 @@ struct ReduceTextItem
 	enum Type {
 		LhsRef,
 		RhsRef,
+		TreeRef,
 		RhsLoc,
 		Txt
 	};
@@ -969,7 +973,6 @@ struct ReduceAction
 	TypeRef *nonTerm;
 	String prod;
 	ReduceTextItemList itemList;
-
 
 	Production *production;
 
@@ -1810,6 +1813,16 @@ struct ConsItemList
 
 struct Pattern
 {
+	Pattern()
+	:
+		nspace(0),
+		list(0),
+		patRepId(0),
+		langEl(0),
+		pdaRun(0),
+		nextBindId(1)
+	{}
+	
 	static Pattern *cons( const InputLoc &loc, Namespace *nspace,
 			PatternItemList *list, int patRepId )
 	{
@@ -1818,12 +1831,9 @@ struct Pattern
 		p->nspace = nspace;
 		p->list = list;
 		p->patRepId = patRepId;
-		p->langEl = 0;
-		p->pdaRun = 0;
-		p->nextBindId = 1;
 		return p;
 	}
-	
+
 	InputLoc loc;
 	Namespace *nspace;
 	PatternItemList *list;
@@ -2070,6 +2080,9 @@ struct UniqueType : public AvlTreeEl<UniqueType>
 	
 	bool ptr()
 		{ return typeId == TYPE_STRUCT || typeId == TYPE_GENERIC; }
+
+	bool listOf( UniqueType *ut )
+		{ return typeId == TYPE_GENERIC && generic->typeId == GEN_LIST && generic->valueUt == ut; }
 
 	bool val() {
 		return typeId == TYPE_STRUCT ||
@@ -2416,10 +2429,17 @@ typedef DList<ObjectField> ParameterList;
 
 struct ObjectMethod
 {
+	enum Type
+	{
+		Call,
+		ParseFinish
+	};
+
 	ObjectMethod( TypeRef *returnTypeRef, String name, 
 			int opcodeWV, int opcodeWC, int numParams, 
 			UniqueType **types, ParameterList *paramList, bool isConst )
 	: 
+		type(Call),
 		returnUT(0),
 		returnTypeRef(returnTypeRef),
 		returnTypeId(0),
@@ -2445,6 +2465,7 @@ struct ObjectMethod
 			UniqueType **types, ParameterList *paramList,
 			bool isConst )
 	: 
+		type(Call),
 		returnUT(returnUT),
 		returnTypeRef(0),
 		returnTypeId(0),
@@ -2467,6 +2488,7 @@ struct ObjectMethod
 		memcpy( this->paramUTs, types, sizeof(UniqueType*)*numParams );
 	}
 
+	Type type;
 	UniqueType *returnUT;
 	TypeRef *returnTypeRef;
 	long returnTypeId;
@@ -2816,6 +2838,7 @@ struct LangVarRef
 
 	bool isInbuiltObject() const;
 	bool isLocalRef() const;
+	bool isProdRef( Compiler *pd ) const;
 	bool isStructRef() const;
 	void loadQualification( Compiler *pd, CodeVect &code, NameScope *rootScope, 
 			int lastPtrInQual, bool forWriting, bool revert ) const;
@@ -2860,6 +2883,7 @@ struct LangVarRef
 	void popRefQuals( Compiler *pd, CodeVect &code, 
 			VarRefLookup &lookup, CallArgVect *args, bool temps ) const;
 
+	bool isFinishCall( VarRefLookup &lookup ) const;
 
 	InputLoc loc;
 	Namespace *nspace;
@@ -2879,6 +2903,7 @@ struct LangTerm
 		NumberType,
 		StringType,
 		MatchType,
+		ProdCompareType,
 		NewType,
 		ConstructType,
 		TypeIdType,
@@ -2972,6 +2997,29 @@ struct LangTerm
 		t->varRef = 0;
 		t->typeRef = typeRef;
 		t->expr = langExpr;
+		return t;
+	}
+
+	static LangTerm *consMatch( const InputLoc &loc,
+			LangVarRef *varRef, Pattern *pattern )
+	{
+		LangTerm *t = new LangTerm;
+		t->type = MatchType;
+		t->loc = loc;
+		t->varRef = varRef;
+		t->pattern = pattern;
+		return t;
+	}
+
+	static LangTerm *consProdCompare( const InputLoc &loc,
+			LangVarRef *varRef, const String &prod, LangExpr *matchExpr )
+	{
+		LangTerm *t = new LangTerm;
+		t->type = ProdCompareType;
+		t->loc = loc;
+		t->varRef = varRef;
+		t->prod = prod;
+		t->expr = matchExpr;
 		return t;
 	}
 
@@ -3100,7 +3148,9 @@ struct LangTerm
 	void evaluateCapture( Compiler *pd, CodeVect &code, bool isTree ) const;
 	UniqueType *evaluateNew( Compiler *pd, CodeVect &code ) const;
 	UniqueType *evaluateConstruct( Compiler *pd, CodeVect &code ) const;
-	void parseFrag( Compiler *pd, CodeVect &code, int stopId ) const;
+
+	static void parseFrag( Compiler *pd, CodeVect &code, int stopId );
+
 	UniqueType *evaluateParse( Compiler *pd, CodeVect &code, bool tree, bool stop ) const;
 	UniqueType *evaluateReadReduce( Compiler *pd, CodeVect &code ) const;
 	void evaluateSendStream( Compiler *pd, CodeVect &code ) const;
@@ -3108,6 +3158,7 @@ struct LangTerm
 	UniqueType *evaluateSend( Compiler *pd, CodeVect &code ) const;
 	UniqueType *evaluateSendTree( Compiler *pd, CodeVect &code ) const;
 	UniqueType *evaluateMatch( Compiler *pd, CodeVect &code ) const;
+	UniqueType *evaluateProdCompare( Compiler *pd, CodeVect &code ) const;
 	UniqueType *evaluate( Compiler *pd, CodeVect &code ) const;
 	void assignFieldArgs( Compiler *pd, CodeVect &code, UniqueType *replUT ) const;
 	UniqueType *evaluateMakeToken( Compiler *pd, CodeVect &code ) const;
@@ -3126,6 +3177,7 @@ struct LangTerm
 	ObjectField *objField;
 	TypeRef *typeRef;
 	Pattern *pattern;
+	String prod;
 	FieldInitVect *fieldInitArgs;
 	GenericType *generic;
 	Constructor *constructor;
@@ -3232,12 +3284,6 @@ struct LangStmt
 {
 	enum Type {
 		AssignType,
-		PrintType,
-		PrintXMLACType,
-		PrintXMLType,
-		PrintStreamType,
-		PrintAccum,
-		PrintDumpType,
 		ExprType,
 		IfType,
 		ElseType,
@@ -3339,14 +3385,6 @@ struct LangStmt
 		return s;
 	}
 
-	static LangStmt *cons( Type type, StmtList *stmtList )
-	{
-		LangStmt *s = new LangStmt;
-		s->type = type;
-		s->stmtList = stmtList;
-		return s;
-	}
-
 	static LangStmt *cons( Type type, LangExpr *expr, StmtList *stmtList, LangStmt *elsePart )
 	{
 		LangStmt *s = new LangStmt;
@@ -3356,6 +3394,20 @@ struct LangStmt
 		s->elsePart = elsePart;
 		return s;
 	}
+
+	void setElsePart( LangStmt *elsePart )
+	{
+		this->elsePart = elsePart;
+	}
+
+	static LangStmt *cons( Type type, StmtList *stmtList )
+	{
+		LangStmt *s = new LangStmt;
+		s->type = type;
+		s->stmtList = stmtList;
+		return s;
+	}
+
 
 	static LangStmt *cons( const InputLoc &loc, Type type )
 	{

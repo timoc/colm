@@ -1,5 +1,5 @@
 dnl 
-dnl Copyright 2006-2016 Adrian Thurston <thurston@colm.net>
+dnl Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
 dnl
 
 dnl Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -20,8 +20,8 @@ dnl LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM
 dnl OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 dnl SOFTWARE.
   
-AC_INIT(colm, 0.13.0.5)
-PUBDATE="May 2017"
+AC_INIT(colm, 0.13.0.7)
+PUBDATE="May 2019"
 
 AM_INIT_AUTOMAKE([foreign])
 
@@ -31,7 +31,12 @@ AM_INIT_AUTOMAKE([foreign])
 AC_CONFIG_MACRO_DIR([m4])
 
 AC_SUBST(PUBDATE)
+AC_CHECK_SIZEOF(void *)
+AC_CHECK_SIZEOF(long)
+AC_CHECK_SIZEOF(unsigned long)
+AC_CHECK_SIZEOF(unsigned long long)
 AC_CONFIG_HEADER([src/config.h src/defs.h])
+AC_CHECK_HEADERS([sys/mman.h sys/wait.h unistd.h])
 
 dnl Choose a default for the build_manual var. If the dist file is present in
 dnl the root then default to no, otherwise go for it.
@@ -78,6 +83,9 @@ AC_ARG_ENABLE(debug,
 AC_CHECK_PROG([ASCIIDOC], [asciidoc], [asciidoc])
 AC_CHECK_PROG([PYGMENTIZE], [pygmentize], [pygmentize])
 AM_CONDITIONAL([BUILD_MANUAL], [test "x$ASCIIDOC" != x && test "x$PYGMENTIZE" != x])
+
+AC_CANONICAL_HOST()
+AM_CONDITIONAL([LINKER_NO_UNDEFINED], [test "x$host_os" = "xlinux-gnu"])
 
 dnl write output files
 AC_OUTPUT([

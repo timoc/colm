@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2006-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -234,17 +234,24 @@ void Compiler::makeLangElIds()
 	}
 
 	assert( ptrLangEl->id == LEL_ID_PTR );
-//	assert( boolLangEl->id == LEL_ID_BOOL );
-//	assert( intLangEl->id == LEL_ID_INT );
 	assert( strLangEl->id == LEL_ID_STR );
 	assert( ignoreLangEl->id == LEL_ID_IGNORE );
 }
 
 void Compiler::makeStructElIds()
 {
-	int nextId = 0;
+	firstStructElId = nextLelId;
+
+	/* Start at the next lang el id and go up from there. Using disjoint sets
+	 * allows us to verify that a tree is a tree and struct is a struct because
+	 * the ID field is at the same offset. */
+	int nextId = nextLelId;
 	for ( StructElList::Iter sel = structEls; sel.lte(); sel++ )
 		sel->id = nextId++;
+
+	structInbuiltId = nextId++;
+	structInputId = nextId++;
+	structStreamId = nextId++;
 }
 
 void Compiler::refNameSpace( LangEl *lel, Namespace *nspace )
@@ -263,35 +270,11 @@ void Compiler::refNameSpace( LangEl *lel, Namespace *nspace )
 void Compiler::makeLangElNames()
 {
 	for ( LelList::Iter lel = langEls; lel.lte(); lel++ ) {
-		if ( lel->id == LEL_ID_VOID ) {
-			lel->fullName = "_void";
-			lel->fullLit = "_void";
-			lel->refName = "_void";
-			lel->declName = "_void";
-			lel->xmlTag = "void";
-
-		}
-//		else if ( lel->id == LEL_ID_INT ) {
-//			lel->fullName = "_int";
-//			lel->fullLit = "_int";
-//			lel->refName = "_int";
-//			lel->declName = "_int";
-//			lel->xmlTag = "int";
-//		}
-//		else if ( lel->id == LEL_ID_BOOL ) {
-//			lel->fullName = "_bool";
-//			lel->fullLit = "_bool";
-//			lel->refName = "_bool";
-//			lel->declName = "_bool";
-//			lel->xmlTag = "bool";
-//		}
-		else {
-			lel->fullName = lel->name;
-			lel->fullLit = lel->lit;
-			lel->refName = lel->lit;
-			lel->declName = lel->lit;
-			lel->xmlTag = lel->name;
-		}
+		lel->fullName = lel->name;
+		lel->fullLit = lel->lit;
+		lel->refName = lel->lit;
+		lel->declName = lel->lit;
+		lel->xmlTag = lel->name;
 
 		/* If there is also a namespace next to the type, we add a prefix to
 		 * the type. It's not convenient to name C++ classes the same as a
@@ -1634,6 +1617,7 @@ void Compiler::makeRuntimeData()
 	}
 
 	runtimeData->argv_generic_id = argvTypeRef->generic->id;
+	runtimeData->stds_generic_id = stdsTypeRef->generic->id;
 
 	/*
 	 * Literals
@@ -1697,9 +1681,14 @@ void Compiler::makeRuntimeData()
 	runtimeData->global_size = globalObjectDef->size();
 
 	/*
-	 * firstNonTermId
+	 * Boundary between terms and non-terms.
 	 */
 	runtimeData->first_non_term_id = firstNonTermId;
+
+	/*
+	 * Boundary between trees and structs
+	 */
+	runtimeData->first_struct_el_id = firstStructElId;
 
 	/* Special trees. */
 	runtimeData->integer_id = -1; //intLangEl->id;
@@ -1709,6 +1698,10 @@ void Compiler::makeRuntimeData()
 	runtimeData->no_token_id = noTokenLangEl->id;
 	runtimeData->global_id = globalSel->id;
 	runtimeData->argv_el_id = argvElSel->id;
+	runtimeData->stds_el_id = stdsElSel->id;
+	runtimeData->struct_inbuilt_id = structInbuiltId;
+	runtimeData->struct_stream_id = structStreamId;
+	runtimeData->struct_input_id = structInputId;
 
 	runtimeData->fsm_execute = &internalFsmExecute;
 	runtimeData->send_named_lang_el = &internalSendNamedLangEl;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2007-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -71,6 +71,7 @@ struct colm_sections
 	long num_generics;
 
 	long argv_generic_id;
+	long stds_generic_id;
 
 	const char **litdata;
 	long *litlen;
@@ -90,6 +91,7 @@ struct colm_sections
 	long global_size;
 
 	long first_non_term_id;
+	long first_struct_el_id;
 
 	long integer_id;
 	long string_id;
@@ -98,10 +100,14 @@ struct colm_sections
 	long no_token_id;
 	long global_id;
 	long argv_el_id;
+	long stds_el_id;
+	long struct_inbuilt_id;
+	long struct_input_id;
+	long struct_stream_id;
 
-	void (*fsm_execute)( struct pda_run *pda_run, struct stream_impl *input_stream );
+	void (*fsm_execute)( struct pda_run *pda_run, struct input_impl *input_stream );
 	void (*send_named_lang_el)( struct colm_program *prg, tree_t **tree,
-			struct pda_run *pda_run, struct stream_impl *input_stream );
+			struct pda_run *pda_run, struct input_impl *input_stream );
 	void (*init_bindings)( struct pda_run *pda_run );
 	void (*pop_binding)( struct pda_run *pda_run, parse_tree_t *tree );
 
@@ -112,7 +118,7 @@ struct colm_sections
 	void (*init_need)();
 	int (*reducer_need_tok)( program_t *prg, struct pda_run *pda_run, int id );
 	int (*reducer_need_ign)( program_t *prg, struct pda_run *pda_run );
-	void (*read_reduce)( program_t *prg, int reducer, stream_t *stream );
+	void (*read_reduce)( program_t *prg, int reducer, input_t *input );
 };
 
 struct heap_list
@@ -130,6 +136,7 @@ struct colm_program
 	const int *argl;
 
 	unsigned char ctx_dep_parsing;
+	unsigned char reduce_clean;
 	struct colm_sections *rtd;
 	struct colm_struct *global;
 	int induce_exit;

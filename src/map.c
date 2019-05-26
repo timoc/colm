@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2012 Adrian Thurston <thurston@colm.net>
+ * Copyright 2010-2018 Adrian Thurston <thurston@colm.net>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -686,7 +686,7 @@ tree_t *colm_vmap_find( program_t *prg, map_t *map, tree_t *key )
 		tree_t *val = colm_struct_get_field( s, tree_t*, 0 );
 
 		if ( map->generic_info->value_type == TYPE_TREE )
-			colm_tree_upref( val );
+			colm_tree_upref( prg, val );
 
 		return val;
 	}
